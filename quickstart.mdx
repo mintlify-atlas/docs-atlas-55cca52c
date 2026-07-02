@@ -1,47 +1,376 @@
 ---
-title: "Quickstart"
-description: "Begin with a guide on the fastest path to a successful outcome"
+title: "Get Started with NASA WorldWind Java in 5 Minutes"
+sidebarTitle: "Quickstart"
+description: "Learn how to create a working 3D virtual globe application with NASA WorldWind Java — from project setup to your first interactive map in under 5 minutes."
 ---
 
-Describe how someone begins using your product. What is the first thing they need to do? Are there any prerequisites?
-
-A quickstart should take someone from zero to using your product. They'll get a quick win and a sense of what they can accomplish.
-
-## Prerequisites
-
-Before you begin, you must have:
-
-- Requirement one (for example, Node.js 18+, a free account, an API key)
-- Requirement two (for example, a compatible device, a compatible browser, a compatible operating system)
-
-## Get started
+This guide walks you through creating a fully functional 3D virtual globe desktop application with NASA WorldWind Java. By the end you will have a running Java Swing application displaying an interactive, OpenGL-rendered Earth with satellite imagery and terrain. All you need is **Java 11 or higher** and a graphics card with an up-to-date OpenGL 2.0-compatible driver.
 
 <Steps>
-  <Step title="Install">
-    Describe how to install your product or sign up.
 
-    ```bash
-    npm install your-package
-    ```
-  </Step>
-  <Step title="Configure">
-    Describe any setup or configuration needed before first use.
+<Step title="Download the Latest Release">
+  Download the pre-built WorldWind Java release archive from GitHub. It contains all required JARs — including JOGL native binaries — pre-assembled and ready to run.
 
-    ```bash
-    your-cli init
-    ```
-  </Step>
-  <Step title="Run it">
-    Show the first thing a user does to see it working.
+  Go to the [latest GitHub release](https://github.com/NASAWorldWind/WorldWindJava/releases/latest) and download the `.zip` archive for your platform. Extract it to a directory of your choice, referred to below as `[WorldWind release]`.
 
-    ```bash
-    your-cli start
-    ```
-  </Step>
+  The extracted directory will contain:
+  - `worldwind.jar` — the core WorldWind SDK
+  - `jogl-all.jar` and `gluegen-rt.jar` — JOGL OpenGL bindings
+  - `gluegen-rt-natives-*.jar` and `jogl-all-natives-*.jar` — platform native libraries
+  - `gdal.jar` — GDAL geospatial data format support
+  - `run-demo.bat` / `run-demo.bash` — convenience launcher scripts
+</Step>
+
+<Step title="Add JARs to Your Classpath">
+  Add the following JARs from the release directory to your project's classpath (or to your IDE's library configuration):
+
+  | JAR | Purpose |
+  |---|---|
+  | `worldwind.jar` | Core WorldWind SDK — all `gov.nasa.worldwind.*` classes |
+  | `jogl-all.jar` | JOGL Java OpenGL bindings (required) |
+  | `gluegen-rt.jar` | GlueGen runtime (required by JOGL) |
+  | `gluegen-rt-natives-<platform>.jar` | Platform-specific native OpenGL libraries |
+  | `jogl-all-natives-<platform>.jar` | Platform-specific JOGL native libraries |
+  | `gdal.jar` | Optional — needed for GDAL raster/vector data formats |
+
+  JOGL automatically extracts the native binaries from the native JARs at runtime into the user's temp directory. Keep all JARs in the same directory so JOGL can find them on the classpath.
+
+  **Command-line classpath example (Linux / macOS):**
+
+  ```bash title="Compile with classpath"
+  javac -cp worldwind.jar:jogl-all.jar:gluegen-rt.jar MyApp.java
+  ```
+
+  ```bash title="Run with classpath"
+  java -cp .:worldwind.jar:jogl-all.jar:gluegen-rt.jar \
+       -Djava.library.path=. MyApp
+  ```
+</Step>
+
+<Step title="Create Your First Globe Application">
+  The simplest possible WorldWind application creates a `WorldWindowGLCanvas`, sets a `BasicModel` on it, and embeds it in a `JFrame`. The code below is taken directly from `SimplestPossibleExample.java` in the WorldWind examples:
+
+  ```java title="SimplestPossibleExample.java"
+  package gov.nasa.worldwindx.examples;
+
+  import gov.nasa.worldwind.BasicModel;
+  import gov.nasa.worldwind.awt.WorldWindowGLCanvas;
+
+  import javax.swing.*;
+
+  /**
+   * This example demonstrates the simplest possible way to create a WorldWind application.
+   */
+  public class SimplestPossibleExample extends JFrame
+  {
+      public SimplestPossibleExample()
+      {
+          WorldWindowGLCanvas wwd = new WorldWindowGLCanvas();
+          wwd.setPreferredSize(new java.awt.Dimension(1000, 800));
+          this.getContentPane().add(wwd, java.awt.BorderLayout.CENTER);
+          wwd.setModel(new BasicModel());
+      }
+
+      public static void main(String[] args)
+      {
+          java.awt.EventQueue.invokeLater(new Runnable()
+          {
+              public void run()
+              {
+                  JFrame frame = new SimplestPossibleExample();
+                  frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+                  frame.pack();
+                  frame.setVisible(true);
+              }
+          });
+      }
+  }
+  ```
+
+  Key points:
+  - `WorldWindowGLCanvas` is the AWT/Swing-compatible OpenGL canvas. It implements the `WorldWindow` interface.
+  - `BasicModel` constructs the default globe (Earth), elevation model, and layer stack as defined in `worldwind.xml`.
+  - The canvas is added to the `JFrame`'s content pane like any other Swing component.
+  - All UI construction must happen on the AWT Event Dispatch Thread — hence the `invokeLater` call.
+</Step>
+
+<Step title="Run the Application">
+  The release archive includes convenience scripts that set up the classpath and JVM flags automatically.
+
+  <Tabs>
+    <Tab title="Windows">
+      ```bat title="run-demo.bat (Windows)"
+      cd [WorldWind release]
+      run-demo.bat
+      ```
+      The script compiles and runs the default demo. To run your own class, pass it as an argument:
+      ```bat title="Run a specific class (Windows)"
+      run-demo.bat gov.nasa.worldwindx.examples.SimplestPossibleExample
+      ```
+    </Tab>
+    <Tab title="macOS / Linux">
+      ```bash title="run-demo.bash (macOS / Linux)"
+      cd [WorldWind release]
+      sh run-demo.bash
+      ```
+      To run your own class:
+      ```bash title="Run a specific class (macOS / Linux)"
+      sh run-demo.bash gov.nasa.worldwindx.examples.SimplestPossibleExample
+      ```
+    </Tab>
+  </Tabs>
+
+  A Swing window will open displaying a 3D globe with satellite imagery. Use the mouse to navigate:
+  - **Left-drag** — pan
+  - **Right-drag or scroll wheel** — zoom
+  - **Ctrl + drag** — tilt and rotate
+</Step>
+
 </Steps>
 
-<Tip>
-  Give people a way to get help. This could be a link to a support page, a chat with a customer support agent, or a forum for your product.
+## Building on the Template
 
-  Example: Need help? Reach out to us at [support@yourcompany.com](mailto:support@yourcompany.com).
+For real applications, the `ApplicationTemplate` class in `gov.nasa.worldwindx.examples` provides a reusable framework with a status bar, layer panel, tool-tip controller, and highlight controller already wired up. Extend `AppFrame` and call the static `start` method:
+
+```java title="ApplicationTemplate pattern"
+package gov.nasa.worldwindx.examples;
+
+import gov.nasa.worldwind.*;
+import gov.nasa.worldwind.avlist.AVKey;
+import gov.nasa.worldwind.awt.WorldWindowGLCanvas;
+import gov.nasa.worldwind.event.*;
+import gov.nasa.worldwind.layers.*;
+import gov.nasa.worldwind.util.*;
+
+import javax.swing.*;
+import java.awt.*;
+
+public class ApplicationTemplate {
+
+    public static class AppPanel extends JPanel {
+
+        protected WorldWindow wwd;
+        protected StatusBar statusBar;
+        protected ToolTipController toolTipController;
+        protected HighlightController highlightController;
+
+        public AppPanel(Dimension canvasSize, boolean includeStatusBar) {
+            super(new BorderLayout());
+
+            this.wwd = this.createWorldWindow();
+            ((Component) this.wwd).setPreferredSize(canvasSize);
+
+            // Create the default model as described in the current worldwind properties.
+            Model m = (Model) WorldWind.createConfigurationComponent(AVKey.MODEL_CLASS_NAME);
+            this.wwd.setModel(m);
+
+            // Setup a select listener for the worldmap click-and-go feature
+            this.wwd.addSelectListener(new ClickAndGoSelectListener(this.getWwd(), WorldMapLayer.class));
+
+            this.add((Component) this.wwd, BorderLayout.CENTER);
+            if (includeStatusBar) {
+                this.statusBar = new StatusBar();
+                this.add(statusBar, BorderLayout.PAGE_END);
+                this.statusBar.setEventSource(wwd);
+            }
+
+            // Add controllers to manage highlighting and tool tips.
+            this.toolTipController = new ToolTipController(this.getWwd(), AVKey.DISPLAY_NAME, null);
+            this.highlightController = new HighlightController(this.getWwd(), SelectEvent.ROLLOVER);
+        }
+
+        protected WorldWindow createWorldWindow() {
+            return new WorldWindowGLCanvas();
+        }
+
+        public WorldWindow getWwd() {
+            return wwd;
+        }
+
+        public StatusBar getStatusBar() {
+            return statusBar;
+        }
+    }
+
+    protected static class AppFrame extends JFrame {
+
+        private Dimension canvasSize = new Dimension(1000, 800);
+
+        protected AppPanel wwjPanel;
+
+        public AppFrame() {
+            this.initialize(true, true, false);
+        }
+
+        protected void initialize(boolean includeStatusBar, boolean includeLayerPanel, boolean includeStatsPanel) {
+            // Create the WorldWindow.
+            this.wwjPanel = this.createAppPanel(this.canvasSize, includeStatusBar);
+            this.wwjPanel.setPreferredSize(canvasSize);
+
+            this.getContentPane().add(wwjPanel, BorderLayout.CENTER);
+            if (includeLayerPanel) {
+                JPanel controlPanel = new JPanel(new BorderLayout(10, 10));
+                controlPanel.add(new LayerPanel(this.getWwd()), BorderLayout.CENTER);
+                this.getContentPane().add(controlPanel, BorderLayout.WEST);
+            }
+
+            // Install view controls layer.
+            ViewControlsLayer viewControlsLayer = new ViewControlsLayer();
+            insertBeforeCompass(getWwd(), viewControlsLayer);
+            this.getWwd().addSelectListener(new ViewControlsSelectListener(this.getWwd(), viewControlsLayer));
+
+            this.pack();
+            WWUtil.alignComponent(null, this, AVKey.CENTER);
+            this.setResizable(true);
+        }
+
+        protected AppPanel createAppPanel(Dimension canvasSize, boolean includeStatusBar) {
+            return new AppPanel(canvasSize, includeStatusBar);
+        }
+
+        public WorldWindow getWwd() {
+            return this.wwjPanel.getWwd();
+        }
+    }
+
+    public static AppFrame start(String appName, Class<?> appFrameClass) {
+        try {
+            final AppFrame frame = (AppFrame) appFrameClass.getConstructor().newInstance();
+            frame.setTitle(appName);
+            frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+            java.awt.EventQueue.invokeLater(() -> frame.setVisible(true));
+            return frame;
+        } catch (Exception e) {
+            e.printStackTrace();
+            return null;
+        }
+    }
+
+    public static void main(String[] args) {
+        ApplicationTemplate.start("WorldWind Application", AppFrame.class);
+    }
+}
+```
+
+To create your own application using the template pattern, subclass `AppFrame` and override `initialize` or `createAppPanel`, then call `ApplicationTemplate.start`:
+
+```java title="MyWorldWindApp.java"
+public class MyWorldWindApp extends ApplicationTemplate {
+
+    public static class AppFrame extends ApplicationTemplate.AppFrame {
+        public AppFrame() {
+            super(true, true, false); // statusBar=true, layerPanel=true, statsPanel=false
+            // Add your custom layers and configuration here
+        }
+    }
+
+    public static void main(String[] args) {
+        ApplicationTemplate.start("My WorldWind App", AppFrame.class);
+    }
+}
+```
+
+## Adding Your First Layer
+
+Layers are the primary mechanism for adding content to the globe. `RenderableLayer` accepts any `Renderable` — including `PointPlacemark`, shapes, and annotations. The following example adds a named placemark at a geographic coordinate:
+
+```java title="AddingALayer.java"
+import gov.nasa.worldwind.*;
+import gov.nasa.worldwind.geom.Position;
+import gov.nasa.worldwind.layers.RenderableLayer;
+import gov.nasa.worldwind.render.PointPlacemark;
+
+public class AddingALayer extends ApplicationTemplate {
+
+    public static class AppFrame extends ApplicationTemplate.AppFrame {
+
+        public AppFrame() {
+            super(true, true, false);
+
+            // Create a RenderableLayer to hold your shapes and placemarks.
+            RenderableLayer layer = new RenderableLayer();
+            layer.setName("My Placemarks");
+
+            // Create a PointPlacemark at NASA Ames Research Center (lat, lon, altitude in meters).
+            PointPlacemark placemark = new PointPlacemark(
+                Position.fromDegrees(37.4089, -122.0644, 0)
+            );
+            placemark.setLabelText("NASA Ames");
+            placemark.setAltitudeMode(WorldWind.CLAMP_TO_GROUND);
+            placemark.setLineEnabled(false);
+
+            layer.addRenderable(placemark);
+
+            // Insert the layer just before the compass so it renders beneath HUD elements.
+            ApplicationTemplate.insertBeforeCompass(getWwd(), layer);
+        }
+    }
+
+    public static void main(String[] args) {
+        ApplicationTemplate.start("WorldWind — Adding a Layer", AppFrame.class);
+    }
+}
+```
+
+Key methods:
+- `Position.fromDegrees(lat, lon, elevation)` — constructs a geographic position.
+- `WorldWind.CLAMP_TO_GROUND` — pins the placemark to the terrain surface regardless of elevation value.
+- `ApplicationTemplate.insertBeforeCompass(wwd, layer)` — inserts your layer at the correct z-order position, beneath the compass HUD layer.
+- `wwd.getModel().getLayers()` — returns the `LayerList` directly if you prefer to manage layer order yourself.
+
+<Tip>
+  To retrieve and inspect the full default layer stack at runtime, call `wwd.getModel().getLayers()` and iterate over the result. The default stack includes imagery, place names, compass, graticule, and view controls layers, all defined in `worldwind.xml`.
 </Tip>
+
+## Troubleshooting
+
+<Accordion title="The globe window opens but the globe is black or blank">
+  This is almost always caused by an **out-of-date graphics driver**. WorldWind requires OpenGL 2.0 or higher.
+
+  - **Windows:** Visit your GPU manufacturer's site — [NVIDIA](https://www.nvidia.com/Download/index.aspx), [AMD](https://www.amd.com/en/support), or [Intel](https://www.intel.com/content/www/us/en/support/detect.html) — and install the latest driver. For laptops, check the laptop OEM's support page.
+  - **macOS:** Ensure macOS is up to date. Apple ships OpenGL drivers as part of the OS.
+  - **Linux:** Update Mesa (`sudo apt update && sudo apt install mesa-utils`) or install the proprietary driver for your GPU.
+
+  After updating the driver, reboot and re-run the application.
+</Accordion>
+
+<Accordion title="UnsatisfiedLinkError or missing JOGL native libraries">
+  JOGL performs **runtime extraction** of native binaries from the native JAR files (e.g., `jogl-all-natives-windows-amd64.jar`) into the user's temp directory. This requires that:
+
+  1. The native JAR files are on the classpath (in the same directory as `jogl-all.jar`).
+  2. The user's temp directory is writable by the JVM process.
+
+  If extraction is blocked by a security policy, you can load natives directly from the library path instead:
+  1. Extract the contents of `gluegen-rt-natives-<platform>.jar` and `jogl-all-natives-<platform>.jar`.
+  2. Place the extracted `.dll` / `.so` / `.dylib` files in the working directory or a directory on `java.library.path`.
+  3. Remove the native JAR files from the classpath.
+  4. Add the JVM flag: `-Djogamp.gluegen.UseTempJarCache=false`
+</Accordion>
+
+<Accordion title="ClassNotFoundException for gov.nasa.worldwind.*">
+  Verify that `worldwind.jar` is on the runtime classpath. When running from the command line, double-check that:
+  - You are `cd`-ed into the WorldWind release directory, or that the full path to `worldwind.jar` is specified.
+  - Both compile-time (`javac -cp ...`) and run-time (`java -cp ...`) classpath arguments include `worldwind.jar`.
+  - In IDEs (IntelliJ IDEA, Eclipse, NetBeans), confirm the JAR is listed under the project's library dependencies.
+</Accordion>
+
+<Accordion title="Application crashes with WWAbsentRequirementException">
+  `WWAbsentRequirementException` is thrown when WorldWind detects at render time that the system does not meet minimum graphics requirements. The `ApplicationTemplate.AppFrame` already handles this:
+
+  ```java title="Rendering exception handler (from ApplicationTemplate.java)"
+  this.wwjPanel.getWwd().addRenderingExceptionListener((Throwable t) -> {
+      if (t instanceof WWAbsentRequirementException) {
+          String message = "Computer does not meet minimum graphics requirements.\n";
+          message += "Please install up-to-date graphics driver and try again.\n";
+          message += "Reason: " + t.getMessage() + "\n";
+          message += "This program will end when you press OK.";
+
+          JOptionPane.showMessageDialog(AppFrame.this, message, "Unable to Start Program",
+                  JOptionPane.ERROR_MESSAGE);
+          System.exit(-1);
+      }
+  });
+  ```
+
+  Resolve by updating your graphics driver to a version that fully supports OpenGL 2.0 or higher.
+</Accordion>

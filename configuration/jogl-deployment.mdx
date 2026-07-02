@@ -1,0 +1,258 @@
+---
+title: "Deploying WorldWind Java: JOGL Native Binaries and Distribution"
+sidebarTitle: "JOGL Deployment"
+description: "Configure JOGL native library loading for production deployment of NASA WorldWind Java. Avoid temp-directory extraction using library path loading or bundled natives."
+---
+
+WorldWind Java uses JOGL (the Java Binding for the OpenGL API) to create and manage OpenGL rendering contexts that integrate with Java's AWT and Swing windowing toolkits. JOGL ships as a combination of portable Java JARs and platform-native shared libraries (`.dll`, `.so`, `.dylib`). By default, JOGL automatically extracts these native binaries from their containing JARs into the user's temp directory at runtime. While convenient for development, this automatic extraction is blocked in certain managed or sandboxed environments, adds startup latency, and can collide with security policies that prohibit executing files from temp directories. This page explains the JOGL library structure, the default extraction mechanism, and the recommended approach for production deployments.
+
+## JOGL Overview
+
+WorldWind Java uses **JOGL v2.4**, released on 7 March 2020. The JOGL distribution is checked into the WorldWind Java project root and distributed with all builds to ensure version compatibility (JOGL changes are occasionally unstable between minor versions).
+
+The distribution consists of two groups of JARs:
+
+**API and runtime JARs** (platform-independent, always required):
+
+| JAR | Purpose |
+|---|---|
+| `jogl-all.jar` | Java bindings to OpenGL, GLU, GLUT, and related APIs |
+| `gluegen-rt.jar` | GlueGen runtime — native method dispatch layer used by JOGL |
+
+**Native binary JARs** (platform-specific, contain shared libraries):
+
+These JARs are JAR archives that embed the native shared libraries for their target platform. JOGL extracts these at runtime unless the alternative library-path loading strategy described below is used.
+
+## Native Binary JARs
+
+The following native binary JARs are included in WorldWind Java and cover all supported platforms. 64-bit (`amd64`) and universal (macOS) variants are the ones most commonly deployed; i586 variants target 32-bit JVMs.
+
+| JAR | Platform | Architecture |
+|---|---|---|
+| `gluegen-rt-natives-linux-amd64.jar` | Linux | 64-bit x86 |
+| `gluegen-rt-natives-linux-i586.jar` | Linux | 32-bit x86 |
+| `gluegen-rt-natives-macosx-universal.jar` | macOS | Universal (x86_64 + ARM) |
+| `gluegen-rt-natives-windows-amd64.jar` | Windows | 64-bit x86 |
+| `gluegen-rt-natives-windows-i586.jar` | Windows | 32-bit x86 |
+| `jogl-all-natives-linux-amd64.jar` | Linux | 64-bit x86 |
+| `jogl-all-natives-linux-i586.jar` | Linux | 32-bit x86 |
+| `jogl-all-natives-macosx-universal.jar` | macOS | Universal (x86_64 + ARM) |
+| `jogl-all-natives-windows-amd64.jar` | Windows | 64-bit x86 |
+| `jogl-all-natives-windows-i586.jar` | Windows | 32-bit x86 |
+
+<Note>
+For a typical production deployment you only need the four JARs that match your target platform (two `gluegen-rt-natives-*` and two `jogl-all-natives-*`). The i586 variants can be omitted if you only support 64-bit JVMs.
+</Note>
+
+## Default Runtime Extraction
+
+When the native binary JARs are present on the classpath, JOGL automatically extracts the embedded shared libraries to a subdirectory of the OS temp directory (e.g. `java.io.tmpdir/jogamp_<hash>/`). This extraction happens once per unique JOGL version and is then reused on subsequent runs.
+
+**This approach works in most development environments but has the following drawbacks in production:**
+
+- Requires write access to the temp directory.
+- May be blocked by OS security policies (e.g. `noexec` mount on `/tmp` in hardened Linux environments).
+- Adds a brief startup delay on first run or after OS temp cleanup.
+- Can cause issues in environments where multiple applications share the same JVM temp directory.
+
+## Library Path Loading (Production)
+
+To bypass temp-directory extraction entirely, you can extract the native binaries once and place them on the native library path. JOGL will then load them directly from that location. Follow these steps:
+
+<Steps>
+  <Step title="Extract native binaries from the JARs">
+    For each platform-native JAR (`gluegen-rt-natives-PLATFORM.jar` and `jogl-all-natives-PLATFORM.jar`), extract the contained shared library files. Native libraries sit at the root of the JAR archive.
+
+    ```bash title="Extracting native libraries (Linux amd64 example)"
+    mkdir -p ./native-libs
+    cd ./native-libs
+
+    jar xf ../gluegen-rt-natives-linux-amd64.jar
+    jar xf ../jogl-all-natives-linux-amd64.jar
+    ```
+
+    After extraction you will have files such as:
+    - `libgluegen_rt.so` (Linux), `gluegen_rt.dll` (Windows), `libgluegen_rt.dylib` (macOS)
+    - `libjogl_desktop.so` (Linux), `jogl_desktop.dll` (Windows), `libjogl_desktop.dylib` (macOS)
+    - Several additional `libjogl_*.so`/`jogl_*.dll`/`libjogl_*.dylib` files
+  </Step>
+  <Step title="Place native libraries on the library path">
+    Copy the extracted native library files to either the application's working directory or to a directory that is included in the platform-specific native library path variable. The working directory is the simplest option for self-contained deployments.
+
+    ```bash title="Copying to the application working directory"
+    cp native-libs/*.so   /opt/myapp/         # Linux
+    cp native-libs/*.dll  C:\MyApp\           # Windows
+    cp native-libs/*.dylib /Applications/MyApp.app/Contents/MacOS/  # macOS
+    ```
+  </Step>
+  <Step title="Remove native JARs from the classpath">
+    Remove `gluegen-rt-natives-PLATFORM.jar` and `jogl-all-natives-PLATFORM.jar` from your application's classpath. **JOGL checks for native JARs before checking the library path.** If the native JARs remain on the classpath, JOGL will still attempt to extract them to the temp directory and ignore the pre-placed libraries.
+
+    Keep `jogl-all.jar` and `gluegen-rt.jar` on the classpath — only the `*-natives-*` JARs should be removed.
+  </Step>
+  <Step title="Add the JVM argument to disable temp JAR cache">
+    Pass the following JVM argument when launching your application:
+
+    ```bash title="Disabling JOGL temp JAR cache"
+    -Djogamp.gluegen.UseTempJarCache=false
+    ```
+
+    Without this flag, JOGL's GlueGen runtime may still attempt to use a JAR-based cache path even when the native JARs are absent from the classpath.
+  </Step>
+</Steps>
+
+A complete launch command line looks like this:
+
+```bash title="Full launch command with library path loading"
+java \
+  -Djogamp.gluegen.UseTempJarCache=false \
+  -Djava.library.path=/opt/myapp \
+  -cp jogl-all.jar:gluegen-rt.jar:worldwind.jar:myapp.jar \
+  com.example.myapp.Main
+```
+
+## Platform Library Path Variables
+
+JOGL respects the standard Java native library path mechanism as well as OS-level environment variables. The table below summarises what to set on each platform:
+
+| Platform | Variable | Example value |
+|---|---|---|
+| All (JVM) | `-Djava.library.path` | `/opt/myapp` or `C:\MyApp` |
+| Linux | `LD_LIBRARY_PATH` | `export LD_LIBRARY_PATH=/opt/myapp:$LD_LIBRARY_PATH` |
+| macOS | `DYLD_LIBRARY_PATH` | `export DYLD_LIBRARY_PATH=/Applications/MyApp.app/Contents/MacOS:$DYLD_LIBRARY_PATH` |
+| Windows | `PATH` | `set PATH=C:\MyApp;%PATH%` |
+
+<Tabs>
+  <Tab title="Windows">
+    Add the native library directory to the `PATH` environment variable **before** launching the JVM, or use `-Djava.library.path`:
+
+    ```bash title="Windows — library path setup"
+    set PATH=C:\MyApp\natives;%PATH%
+    java -Djogamp.gluegen.UseTempJarCache=false ^
+         -cp jogl-all.jar;gluegen-rt.jar;worldwind.jar;myapp.jar ^
+         com.example.myapp.Main
+    ```
+
+    Alternatively, in a `.bat` launcher:
+
+    ```bash title="Windows — launcher.bat"
+    @echo off
+    set APP_HOME=%~dp0
+    set PATH=%APP_HOME%natives;%PATH%
+    java -Djogamp.gluegen.UseTempJarCache=false ^
+         -cp "%APP_HOME%jogl-all.jar;%APP_HOME%gluegen-rt.jar;%APP_HOME%worldwind.jar;%APP_HOME%myapp.jar" ^
+         com.example.myapp.Main
+    ```
+  </Tab>
+  <Tab title="macOS">
+    Set `DYLD_LIBRARY_PATH` or use `-Djava.library.path`. Note that macOS System Integrity Protection (SIP) strips `DYLD_LIBRARY_PATH` for certain executables; the `-Djava.library.path` JVM argument is the more reliable approach:
+
+    ```bash title="macOS — library path setup"
+    export DYLD_LIBRARY_PATH=/Applications/MyApp.app/Contents/MacOS:$DYLD_LIBRARY_PATH
+    java -Djogamp.gluegen.UseTempJarCache=false \
+         -Djava.library.path=/Applications/MyApp.app/Contents/MacOS \
+         -cp jogl-all.jar:gluegen-rt.jar:worldwind.jar:myapp.jar \
+         com.example.myapp.Main
+    ```
+
+    For a bundled `.app`, place the `.dylib` files under `Contents/MacOS/` and add the following to `Info.plist` or the startup script.
+  </Tab>
+  <Tab title="Linux">
+    Set `LD_LIBRARY_PATH` or use `-Djava.library.path`:
+
+    ```bash title="Linux — library path setup"
+    export LD_LIBRARY_PATH=/opt/myapp/natives:$LD_LIBRARY_PATH
+    java -Djogamp.gluegen.UseTempJarCache=false \
+         -Djava.library.path=/opt/myapp/natives \
+         -cp jogl-all.jar:gluegen-rt.jar:worldwind.jar:myapp.jar \
+         com.example.myapp.Main
+    ```
+
+    For systemd service units, set `Environment=LD_LIBRARY_PATH=/opt/myapp/natives` in the `[Service]` block.
+  </Tab>
+</Tabs>
+
+## Verifying JOGL Setup
+
+Once the application starts, you can confirm that JOGL loaded correctly and that WorldWind has selected an appropriate OpenGL profile:
+
+```java title="Verifying JOGL profile selection"
+import gov.nasa.worldwind.Configuration;
+import com.jogamp.opengl.GLCapabilities;
+import com.jogamp.opengl.GLProfile;
+
+// Should return a fixed-function compatible profile (e.g. GL2 or GL4bc)
+GLProfile profile = Configuration.getMaxCompatibleGLProfile();
+System.out.println("Max compatible GL profile: " + profile.getName());
+
+// Inspect the capabilities WorldWind will request
+GLCapabilities caps = Configuration.getRequiredGLCapabilities();
+System.out.println("Double buffered:  " + caps.getDoubleBuffered());
+System.out.println("Depth bits:       " + caps.getDepthBits());
+System.out.println("RGBA bits:        "
+    + caps.getRedBits() + "/" + caps.getGreenBits()
+    + "/" + caps.getBlueBits() + "/" + caps.getAlphaBits());
+```
+
+You can also inspect VBO availability through the scene controller's `GLRuntimeCapabilities` after the first frame has rendered:
+
+```java title="Checking VBO availability at runtime"
+import gov.nasa.worldwind.SceneController;
+
+SceneController sc = wwd.getSceneController();
+boolean vboEnabled = sc.getGLRuntimeCapabilities().isUseVertexBufferObject();
+System.out.println("VBO enabled: " + vboEnabled);
+```
+
+`GLRuntimeCapabilities.isUseVertexBufferObject()` returns `true` when VBO usage is both supported by the driver and enabled via `AVKey.VBO_USAGE` in the configuration.
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Black screen or UnsatisfiedLinkError on startup">
+    **Symptom:** The `WorldWindowGLCanvas` renders a black or blank frame, or the JVM throws `UnsatisfiedLinkError: no jogl_desktop in java.library.path`.
+
+    **Cause:** The native JOGL libraries are not found. Either the native JARs were removed from the classpath but the extracted `.so`/`.dll`/`.dylib` files are not on the library path, or the graphics driver does not expose a compatible OpenGL profile.
+
+    **Resolution:**
+    1. Verify the native library directory is listed in `-Djava.library.path` or the OS library path variable.
+    2. Update your graphics card driver to the latest version from the manufacturer's website (NVIDIA, AMD/ATI, or Intel). On Windows, use Device Manager → Display Adapters → Update Driver. On Linux, use the distribution's package manager or the official `.run` installer.
+    3. Confirm you are using the correct architecture variant (amd64 vs. i586) for your JVM bitness.
+  </Accordion>
+  <Accordion title="GLException on macOS: context must be created on EDT">
+    **Symptom:** A `com.jogamp.opengl.GLException` is thrown with a message about the OpenGL context or AWT event thread.
+
+    **Cause:** On macOS, JOGL requires all OpenGL operations to run on the AWT Event Dispatch Thread (EDT). WorldWind respects this constraint internally, but if you construct `WorldWindowGLCanvas` or call any GL-bound method from a non-EDT thread (e.g. from `main()` directly), JOGL will throw.
+
+    **Resolution:** Always construct and interact with WorldWind UI components from the EDT:
+
+    ```java title="Constructing WorldWindow on the EDT"
+    SwingUtilities.invokeLater(() -> {
+        WorldWindowGLCanvas wwd = new WorldWindowGLCanvas();
+        // ... configure and add to a JFrame
+    });
+    ```
+  </Accordion>
+  <Accordion title="Native libraries not found after extraction">
+    **Symptom:** You have extracted the native JARs and placed the files on the library path, but `UnsatisfiedLinkError` persists.
+
+    **Cause:** Either the native binary JARs are still on the classpath (JOGL will try them first), or the `-Djogamp.gluegen.UseTempJarCache=false` JVM flag is missing.
+
+    **Resolution:**
+    1. Confirm that **none** of `gluegen-rt-natives-*.jar` or `jogl-all-natives-*.jar` appear in the JVM classpath.
+    2. Confirm that `-Djogamp.gluegen.UseTempJarCache=false` is present in the JVM arguments.
+    3. Print `System.getProperty("java.library.path")` at startup and verify the directory containing the extracted libraries is listed.
+    4. On Linux, run `ldd libjogl_desktop.so` from the native library directory to check that all shared library dependencies are satisfied.
+  </Accordion>
+  <Accordion title="Poor rendering performance or software rasterization">
+    **Symptom:** Frame rates are extremely low (single digits), or `Configuration.getMaxCompatibleGLProfile()` returns `GL2` but rendering appears to use software fallback.
+
+    **Cause:** The JVM may have selected a software OpenGL renderer (e.g. Mesa's `llvmpipe` on Linux, or Microsoft's software OpenGL on Windows).
+
+    **Resolution:**
+    1. Verify that VBO usage is active at runtime using `sc.getGLRuntimeCapabilities().isUseVertexBufferObject()`. If it returns `false` even when `AVKey.VBO_USAGE` is `true` in configuration, the driver may not support VBOs — update drivers.
+    2. On Linux, ensure the hardware GL driver is installed (`libGL.so` should point to the hardware driver, not `libGL.so.1 → /usr/lib/x86_64-linux-gnu/mesa/libGL.so.1`).
+    3. On Windows, check Device Manager for any "Microsoft Basic Display Adapter" entries — these indicate Windows is using the software fallback because the hardware driver is not installed.
+    4. Confirm `AVKey.VBO_USAGE` is set to `true` (this is the default in `worldwind.xml`).
+  </Accordion>
+</AccordionGroup>

@@ -1,0 +1,344 @@
+---
+title: "Renderable Shapes API: Path, Polygon, SurfaceShape, Placemarks"
+sidebarTitle: "Renderables"
+description: "Reference for Renderable, ShapeAttributes, Path, Polygon, SurfacePolygon, ExtrudedPolygon, PointPlacemark, and other renderable shapes in WorldWind Java."
+---
+
+The `gov.nasa.worldwind.render` package provides the full suite of geometric and annotative objects that can be drawn on the globe. All visual objects implement `Renderable`, and most extend `AbstractShape`, which wires them into WorldWind's ordered rendering, picking, and highlighting pipelines. Shapes are added to a `RenderableLayer` and can share `ShapeAttributes` instances to reduce memory usage.
+
+---
+
+## `Renderable` Interface
+
+The root interface for everything that can be drawn. `DrawContext` carries the OpenGL state, view, globe, and scene-controller reference for the current frame.
+
+```java title="Renderable — the single rendering contract"
+public interface Renderable {
+    /**
+     * Draw this object using the provided draw context.
+     * @param dc the current DrawContext; never null.
+     */
+    void render(DrawContext dc);
+}
+```
+
+---
+
+## `ShapeAttributes` / `BasicShapeAttributes`
+
+`ShapeAttributes` is a shared, mutable attribute bundle used by `Path`, `Polygon`, `SurfaceShape`, and related classes. `BasicShapeAttributes` is the standard implementation. Attribute instances can be shared across many shapes — changes take effect on the next rendered frame.
+
+```java title="ShapeAttributes — creating and configuring"
+ShapeAttributes attrs = new BasicShapeAttributes();
+
+// Interior fill
+attrs.setDrawInterior(true);
+attrs.setInteriorMaterial(new Material(Color.BLUE));
+attrs.setInteriorOpacity(0.5);
+
+// Outline
+attrs.setDrawOutline(true);
+attrs.setOutlineMaterial(new Material(Color.WHITE));
+attrs.setOutlineOpacity(1.0);
+attrs.setOutlineWidth(2.0);          // pixels; capped at implementation max (~10)
+attrs.setOutlineStippleFactor(3);    // each bit repeated 3× (dashed lines)
+attrs.setOutlineStipplePattern((short) 0xF0F0); // bit pattern
+
+// Lighting
+attrs.setEnableLighting(true);
+attrs.setEnableAntialiasing(true);
+
+// Interior texture (replaces interior material when set)
+attrs.setImageSource("images/earth_texture.png"); // String, URL, or BufferedImage
+attrs.setImageScale(1.0);           // 1.0 = no scaling
+
+// Highlight copy (modify independently)
+ShapeAttributes highlight = attrs.copy();
+highlight.setInteriorMaterial(new Material(Color.YELLOW));
+```
+
+| Method | Type | Description |
+|---|---|---|
+| `setDrawInterior(boolean)` | visibility | Show/hide fill geometry. |
+| `setDrawOutline(boolean)` | visibility | Show/hide outline. |
+| `setInteriorMaterial(Material)` | colour | Fill colour / lighting properties. |
+| `setOutlineMaterial(Material)` | colour | Outline colour / lighting properties. |
+| `setInteriorOpacity(double)` | opacity | 0–1, independent from outline. |
+| `setOutlineOpacity(double)` | opacity | 0–1, independent from fill. |
+| `setOutlineWidth(double)` | geometry | Pixels; 0 disables outline. |
+| `setEnableLighting(boolean)` | shading | Applies `DrawContext` standard lighting. |
+| `setImageSource(Object)` | texture | Replaces fill with a texture image. |
+| `setImageScale(double)` | texture | Magnification/minification factor. |
+| `copy()` | utility | Shallow clone for highlight variants. |
+
+---
+
+## `AbstractShape`
+
+`AbstractShape` is the base class for `Path`, `Polygon`, `ExtrudedPolygon`, and similar 3D shapes. It implements `Highlightable`, `OrderedRenderable`, `Movable`, `Movable2`, `Draggable`, and `Restorable`.
+
+```java title="AbstractShape — common property setters"
+// Altitude mode (WorldWind.ABSOLUTE | RELATIVE_TO_GROUND | CLAMP_TO_GROUND)
+shape.setAltitudeMode(WorldWind.RELATIVE_TO_GROUND);
+
+// Normal vs. highlight attributes
+shape.setAttributes(normalAttrs);
+shape.setHighlightAttributes(highlightAttrs);
+shape.setHighlighted(true);
+
+// Visibility
+shape.setVisible(true);
+
+// Pick width (pixels wider than drawn outline for easier picking)
+shape.setOutlinePickWidth(10); // default 10 px
+```
+
+Default materials on `AbstractShape`:
+- Interior: `Material.LIGHT_GRAY`
+- Outline: `Material.DARK_GRAY`
+- Highlight: `Material.WHITE`
+- Default altitude mode: `WorldWind.ABSOLUTE`
+
+---
+
+## `Path`
+
+`Path` draws a line or curve between a sequence of `Position` objects. It supports great-circle, rhumb, and linear path types; terrain conformance; and extrusion to a vertical curtain.
+
+```java title="Path — construction and key setters"
+List<Position> positions = Arrays.asList(
+    Position.fromDegrees(37.0, -122.0, 1000),
+    Position.fromDegrees(37.5, -121.5, 2000),
+    Position.fromDegrees(38.0, -121.0, 1500)
+);
+
+Path path = new Path(positions);
+
+// Path interpolation type
+path.setPathType(AVKey.GREAT_CIRCLE);  // GREAT_CIRCLE | RHUMB_LINE | LINEAR
+
+// Terrain following
+path.setFollowTerrain(true);
+path.setTerrainConformance(10.0); // target pixels between tessellation points
+
+// Vertical curtain (extrude to ground)
+path.setExtrude(true);
+path.setDrawVerticals(true); // draw vertical lines at each position point
+
+// Altitude mode
+path.setAltitudeMode(WorldWind.RELATIVE_TO_GROUND);
+
+// Show position dots
+path.setShowPositions(true);
+path.setShowPositionsScale(5.0); // dot diameter scale
+path.setShowPositionsThreshold(1e6); // eye-distance threshold in meters
+
+// Update positions after construction
+path.setPositions(newPositions);
+Iterable<? extends Position> current = path.getPositions();
+
+// Attributes
+ShapeAttributes attrs = new BasicShapeAttributes();
+attrs.setOutlineMaterial(new Material(Color.CYAN));
+attrs.setOutlineWidth(3.0);
+path.setAttributes(attrs);
+```
+
+<Note>
+  When drawn on a 2D globe, `Path` automatically delegates to a `SurfacePolyline`. Extrusion, draw-verticals, and outline pick width are not available in 2D mode.
+</Note>
+
+---
+
+## `Polygon`
+
+`Polygon` renders a closed 3D polygon with an optional interior fill, outlines, and interior boundaries (holes). Vertices are expressed as `Position` objects; altitude mode determines how altitudes are interpreted.
+
+```java title="Polygon — outer boundary and inner holes"
+List<Position> outer = Arrays.asList(
+    Position.fromDegrees(37.0, -122.0, 500),
+    Position.fromDegrees(37.0, -121.0, 500),
+    Position.fromDegrees(38.0, -121.0, 500),
+    Position.fromDegrees(38.0, -122.0, 500)
+);
+
+Polygon polygon = new Polygon(outer);
+polygon.setAltitudeMode(WorldWind.ABSOLUTE);
+
+// Add a hole
+List<Position> hole = Arrays.asList(
+    Position.fromDegrees(37.3, -121.8, 500),
+    Position.fromDegrees(37.3, -121.3, 500),
+    Position.fromDegrees(37.7, -121.3, 500),
+    Position.fromDegrees(37.7, -121.8, 500)
+);
+polygon.addInnerBoundary(hole);
+
+ShapeAttributes fill = new BasicShapeAttributes();
+fill.setInteriorMaterial(new Material(new Color(0, 100, 200, 180)));
+fill.setDrawInterior(true);
+fill.setDrawOutline(true);
+fill.setOutlineWidth(2.0);
+polygon.setAttributes(fill);
+```
+
+---
+
+## `ExtrudedPolygon`
+
+`ExtrudedPolygon` extends `Polygon` by extruding the footprint upward to form a solid 3D building-like volume. Cap and side faces can have independent attributes.
+
+```java title="ExtrudedPolygon — cap and side styling"
+ExtrudedPolygon ep = new ExtrudedPolygon(footprintPositions);
+
+// Style the roof (cap)
+ShapeAttributes capAttrs = new BasicShapeAttributes();
+capAttrs.setInteriorMaterial(new Material(Color.DARK_GRAY));
+capAttrs.setDrawOutline(false);
+ep.setCapAttributes(capAttrs);
+
+// Style the walls (sides)
+ShapeAttributes sideAttrs = new BasicShapeAttributes();
+sideAttrs.setInteriorMaterial(new Material(Color.LIGHT_GRAY));
+sideAttrs.setImageSource("textures/brick.png");
+ep.setSideAttributes(sideAttrs);
+
+// Push the base below the terrain surface (meters)
+ep.setBaseDepth(5.0);
+```
+
+---
+
+## `SurfaceShape`
+
+`SurfaceShape` is the interface for shapes that drape conformally on the terrain surface. Implementations automatically re-project onto the terrain; no altitude values are used for vertical positioning.
+
+```java title="SurfaceShape interface — key members"
+public interface SurfaceShape
+    extends SurfaceObject, Highlightable, ExtentHolder,
+            MeasurableArea, MeasurableLength, Restorable, Attributable {
+
+    // Geometry extent for the shape on the surface
+    Sector getSector();   // bounding lat/lon sector
+
+    void setAttributes(ShapeAttributes normalAttrs);
+    void setHighlightAttributes(ShapeAttributes highlightAttrs);
+    boolean isHighlighted();
+    void setHighlighted(boolean highlighted);
+}
+```
+
+Concrete `SurfaceShape` subclasses:
+
+| Class | Key Constructor Parameters | Description |
+|---|---|---|
+| `SurfacePolygon` | `Iterable<LatLon>` | Closed filled polygon on terrain. |
+| `SurfacePolyline` | `Iterable<LatLon>` | Open polyline draped on terrain. |
+| `SurfaceCircle` | `LatLon center, double radius` | Circle by geographic center + radius (meters). |
+| `SurfaceEllipse` | `LatLon center, double majorRadius, double minorRadius, Angle heading` | Ellipse with orientation. |
+| `SurfaceQuad` | `LatLon center, double width, double height, Angle heading` | Oriented rectangle. |
+| `SurfaceSector` | `Sector` | Fills a lat/lon bounding rectangle. |
+
+```java title="SurfacePolygon — terrain-conforming fill"
+List<LatLon> locations = Arrays.asList(
+    LatLon.fromDegrees(37.0, -122.0),
+    LatLon.fromDegrees(37.0, -121.0),
+    LatLon.fromDegrees(38.0, -121.0),
+    LatLon.fromDegrees(38.0, -122.0)
+);
+
+SurfacePolygon poly = new SurfacePolygon(locations);
+
+ShapeAttributes a = new BasicShapeAttributes();
+a.setInteriorMaterial(new Material(new Color(0, 200, 100, 120)));
+a.setDrawInterior(true);
+a.setDrawOutline(true);
+a.setOutlineMaterial(new Material(Color.GREEN));
+poly.setAttributes(a);
+
+layer.addRenderable(poly);
+```
+
+---
+
+## `PointPlacemark`
+
+`PointPlacemark` is a screen-space icon with an optional label and a leader line connecting the icon to its 3D geographic position.
+
+```java title="PointPlacemark — construction and styling"
+Position pos = Position.fromDegrees(37.9, -122.4, 0);
+PointPlacemark placemark = new PointPlacemark(pos);
+
+placemark.setLabelText("Oakland");
+placemark.setAltitudeMode(WorldWind.CLAMP_TO_GROUND);
+
+// Show the leader line from icon to terrain contact point
+placemark.setLineEnabled(true);
+
+// Custom icon
+PointPlacemarkAttributes pma = new PointPlacemarkAttributes();
+pma.setImageAddress("images/pushpin.png");
+pma.setScale(0.6);                            // scale relative to image size
+pma.setImageOffset(new Offset(0.5, 0.0,       // centre-bottom anchor
+    AVKey.FRACTION, AVKey.FRACTION));
+pma.setLabelColor("ffffffff");                // ARGB hex string
+pma.setLabelOffset(new Offset(0.9, 0.6,
+    AVKey.FRACTION, AVKey.FRACTION));
+
+placemark.setAttributes(pma);
+
+// Highlight attributes (optional)
+PointPlacemarkAttributes highlight = new PointPlacemarkAttributes(pma);
+highlight.setScale(0.9);
+placemark.setHighlightAttributes(highlight);
+
+layer.addRenderable(placemark);
+```
+
+`PointPlacemark` participates in global text decluttering when `setEnableDecluttering(true)` is called. Only the label is considered during declutter calculations.
+
+<Tip>
+  `PointPlacemark` implements `LODSelector` as an inner interface. Register your own `LODSelector` via `setLODSelector(LODSelector)` to dynamically swap attributes or scale based on eye distance — useful for performance-critical symbol sets.
+</Tip>
+
+---
+
+## Combined Example
+
+```java title="Adding multiple shapes to a RenderableLayer"
+RenderableLayer layer = new RenderableLayer();
+layer.setName("Scenario Shapes");
+
+// A terrain-conforming area
+SurfaceCircle area = new SurfaceCircle(LatLon.fromDegrees(37.5, -122.0), 50000);
+ShapeAttributes areaAttrs = new BasicShapeAttributes();
+areaAttrs.setInteriorMaterial(new Material(new Color(255, 0, 0, 80)));
+areaAttrs.setDrawOutline(true);
+areaAttrs.setOutlineMaterial(new Material(Color.RED));
+areaAttrs.setOutlineWidth(2);
+area.setAttributes(areaAttrs);
+layer.addRenderable(area);
+
+// A 3D flight path
+List<Position> flightPath = Arrays.asList(
+    Position.fromDegrees(37.0, -122.5, 5000),
+    Position.fromDegrees(37.8, -121.8, 8000),
+    Position.fromDegrees(38.5, -121.2, 3000)
+);
+Path path = new Path(flightPath);
+path.setPathType(AVKey.GREAT_CIRCLE);
+path.setAltitudeMode(WorldWind.ABSOLUTE);
+ShapeAttributes pathAttrs = new BasicShapeAttributes();
+pathAttrs.setOutlineMaterial(new Material(Color.CYAN));
+pathAttrs.setOutlineWidth(3);
+path.setAttributes(pathAttrs);
+layer.addRenderable(path);
+
+// A waypoint marker
+PointPlacemark wp = new PointPlacemark(Position.fromDegrees(37.8, -121.8, 8000));
+wp.setLabelText("WP1");
+wp.setAltitudeMode(WorldWind.ABSOLUTE);
+layer.addRenderable(wp);
+
+wwd.getModel().getLayers().add(layer);
+```

@@ -1,0 +1,524 @@
+---
+title: "Terrain and Elevation Model API Reference"
+sidebarTitle: "Terrain"
+description: "Reference for ElevationModel, CompoundElevationModel, BasicElevationModel, HighResolutionTerrain, and the Tessellator used in NASA WorldWind Java."
+---
+
+The terrain system in WorldWind Java is responsible for two distinct but related concerns: providing elevation values for geographic positions (via the `ElevationModel` interface and its implementations), and generating 3D mesh geometry for rendering (via the `Tessellator` interface). Elevation models form a composable hierarchy — a `CompoundElevationModel` delegates to child models in priority order, allowing seamless blending of global and regional datasets. `HighResolutionTerrain` builds on this system to offer accurate line-of-sight and terrain intersection calculations using the best available resolution data, blocking until the required tiles are retrieved from cache or network. The `Tessellator` converts elevation data into GPU-ready `SectorGeometry`, applying dynamic level-of-detail based on eye distance.
+
+---
+
+## ElevationModel Interface
+
+`gov.nasa.worldwind.globes.ElevationModel` is the core interface for terrain height data in WorldWind. It extends `WWObject`, `Restorable`, and `Disposable`. An elevation model may approximate terrain at multiple levels of spatial resolution; the resolution actually achieved at query time depends on what data is currently available in memory.
+
+### Basic Information
+
+```java title="ElevationModel identity and coverage"
+ElevationModel em = globe.getElevationModel();
+
+// Name for display / identification
+String name = em.getName();
+em.setName("SRTM 30m");
+
+// Extremes
+double max = em.getMaxElevation(); // highest value in the model
+double min = em.getMinElevation(); // lowest value (may be negative — below sea level)
+
+// Does this model cover a sector?
+// Returns: 0 = fully contains, 1 = partially intersects, -1 = no intersection
+int coverage = em.intersects(Sector.fromDegrees(36, 37, -117, -116));
+
+// Does this model contain a specific location?
+boolean has = em.contains(Angle.fromDegrees(36.5), Angle.fromDegrees(-116.5));
+```
+
+### Single-Point Elevation
+
+```java title="Querying elevation at a single location"
+Angle lat = Angle.fromDegrees(36.455);
+Angle lon = Angle.fromDegrees(-116.867);
+
+// Best available elevation in memory; returns missingDataReplacement if unavailable
+double elev = em.getElevation(lat, lon);
+
+// Same query but returns the raw missing-data signal instead of the replacement
+double raw  = em.getUnmappedElevation(lat, lon);
+
+// Highest-resolution local cache elevation (only from disk, never network)
+double hires = em.getUnmappedLocalSourceElevation(lat, lon);
+```
+
+### Batch Elevation Queries
+
+```java title="Batch elevation queries over a sector"
+Sector sector = Sector.fromDegrees(36, 37, -117, -116);
+List<LatLon> latlons = Arrays.asList(
+    LatLon.fromDegrees(36.2, -116.9),
+    LatLon.fromDegrees(36.5, -116.7),
+    LatLon.fromDegrees(36.8, -116.5)
+);
+double[] buffer = new double[latlons.size()]; // must be pre-allocated
+
+// targetResolution: desired horizontal resolution in radians
+// Returns: actual resolution achieved; Double.MAX_VALUE if not determinable
+double targetRes = 1.0 / 6378137.0; // ~1 meter
+double achieved  = em.getElevations(sector, latlons, targetRes, buffer);
+
+// Unmapped variant — does not replace missing signal with replacement value
+double achieved2 = em.getUnmappedElevations(sector, latlons, targetRes, buffer);
+```
+
+### Resolution and Level of Detail
+
+| Method | Return Type | Description |
+|--------|-------------|-------------|
+| `getBestResolution(Sector)` | `double` | Best attainable resolution in radians for the sector (or global best if `null`) |
+| `getBestResolutions(Sector)` | `double[]` | Per-model resolutions (relevant for `CompoundElevationModel`) |
+| `getDetailHint(Sector)` | `double` | LOD bias for a sector (positive = more detail, negative = less) |
+| `getLocalDataAvailability(Sector, Double)` | `double` | Fraction (0–1) of data available locally for the sector and resolution |
+
+```java title="Resolution and LOD queries"
+double best = em.getBestResolution(null); // global best resolution in radians
+double hint = em.getDetailHint(Sector.fromDegrees(36, 37, -117, -116)); // 0 = default
+double avail = em.getLocalDataAvailability(sector, 1e-5); // 1.0 = fully cached
+```
+
+### Extreme Elevations
+
+```java title="Querying extreme elevations"
+double[] atPoint  = em.getExtremeElevations(lat, lon);     // [min, max] at a location
+double[] inSector = em.getExtremeElevations(sector);        // [min, max] in a sector
+```
+
+### Missing Data
+
+| Method | Description |
+|--------|-------------|
+| `getMissingDataSignal()` | Returns the sentinel value indicating no data (default: `-Double.MAX_VALUE`) |
+| `setMissingDataSignal(double flag)` | Sets the sentinel value for missing data |
+| `getMissingDataReplacement()` | Returns the value substituted when the signal is encountered |
+| `setMissingDataReplacement(double missingDataValue)` | Sets the replacement value |
+
+```java title="Handling missing data"
+System.out.println(em.getMissingDataSignal());      // -1.7976931348623157E308
+System.out.println(em.getMissingDataReplacement()); // typically 0.0
+
+// Replace missing ocean values with -50.0 instead of 0.0
+em.setMissingDataReplacement(-50.0);
+```
+
+### Enable/Disable and Caching
+
+```java title="Enabling, disabling, and cache control"
+em.setEnabled(false); // ignore this model during queries
+System.out.println(em.isEnabled()); // false
+
+// Disable extreme-value caching during bulk terrain intersection calculations
+// to avoid memory pressure when many unique sectors are queried
+em.setExtremesCachingEnabled(false);
+System.out.println(em.isExtremesCachingEnabled()); // false
+
+// Network retrieval (applicable to remote models)
+em.setNetworkRetrievalEnabled(true);
+System.out.println(em.isNetworkRetrievalEnabled());
+
+// Force refresh of cached data (0 = use intrinsic expiry)
+em.setExpiryTime(System.currentTimeMillis());
+```
+
+<Warning>
+Set `setExtremesCachingEnabled(false)` before performing large-scale terrain intersection computations (e.g., line-of-sight surveys). With many unique sectors, caching can consume significant heap space and degrade performance.
+</Warning>
+
+---
+
+## CompoundElevationModel
+
+`gov.nasa.worldwind.terrain.CompoundElevationModel` extends `AbstractElevationModel` and composes multiple child `ElevationModel` instances. When an elevation is queried, the compound model delegates to each child in order and combines their results, preferring higher-resolution data when available. This is the default model attached to the `Earth` globe, which layers global SRTM data with higher-resolution regional datasets.
+
+### Managing Child Models
+
+```java title="Adding and removing elevation models"
+CompoundElevationModel compound = (CompoundElevationModel) earth.getElevationModel();
+
+// Add at the end (lowest priority)
+compound.addElevationModel(myModel);
+
+// Add at a specific index (index 0 = highest priority / queried first)
+compound.addElevationModel(0, highResModel);
+
+// Remove by reference
+compound.removeElevationModel(myModel);
+
+// Remove by index
+compound.removeElevationModel(0);
+
+// Get all child models (thread-safe snapshot via CopyOnWriteArrayList)
+List<ElevationModel> models = compound.getElevationModels();
+
+// Check whether a specific model is in the hierarchy
+boolean present = compound.containsElevationModel(myModel);
+```
+
+<Tip>
+Child models are queried in list order. Insert high-resolution regional models at a **low index** (high priority) so they take precedence over coarser global models when their coverage areas overlap.
+</Tip>
+
+### Batch Queries with Per-Model Resolution Arrays
+
+`CompoundElevationModel` supports per-model target resolution arrays, allowing each child to be queried at a different resolution:
+
+```java title="Batch query with per-model resolution array"
+double[] targetResolutions = compound.getBestResolutions(sector); // one per child
+double[] buffer = new double[latlons.size()];
+
+// Returns an array of achieved resolutions — one per child model
+double[] achieved = compound.getElevations(sector, latlons, targetResolutions, buffer);
+```
+
+---
+
+## BasicElevationModel
+
+`gov.nasa.worldwind.terrain.BasicElevationModel` extends `AbstractElevationModel` and implements `BulkRetrievable`. It is the standard tile-based elevation model built on a quadtree of cached elevation tiles, downloaded from a remote service or local file store and cached to disk.
+
+### Construction
+
+```java title="Creating a BasicElevationModel from AVList parameters"
+AVList params = new AVListImpl();
+params.setValue(AVKey.SERVICE,          "https://data.worldwind.arc.nasa.gov/elev");
+params.setValue(AVKey.DATASET_NAME,     "srtm30");
+params.setValue(AVKey.DATA_CACHE_NAME,  "Earth/SRTM30");
+params.setValue(AVKey.NUM_LEVELS,       14);
+params.setValue(AVKey.NUM_EMPTY_LEVELS, 0);
+params.setValue(AVKey.LEVEL_ZERO_TILE_DELTA, new LatLon(
+    Angle.fromDegrees(36.0), Angle.fromDegrees(36.0)));
+params.setValue(AVKey.TILE_HEIGHT, 150);
+params.setValue(AVKey.TILE_WIDTH,  150);
+params.setValue(AVKey.SECTOR,      Sector.FULL_SPHERE);
+params.setValue(AVKey.FORMAT_SUFFIX, ".bil");
+
+BasicElevationModel model = new BasicElevationModel(params);
+```
+
+Alternatively, configure from an XML `Element` or a restorable state string:
+
+```java title="Creating a BasicElevationModel from XML"
+Document doc = WWXML.openDocumentFile("config/Earth/EarthElevations.xml", null);
+BasicElevationModel model = new BasicElevationModel(doc.getDocumentElement(), null);
+```
+
+### Key AVList Configuration Parameters
+
+| Parameter (`AVKey.*`) | Description |
+|----------------------|-------------|
+| `SERVICE` | Base URL of the elevation tile service |
+| `DATASET_NAME` | Dataset or layer name requested from the service |
+| `DATA_CACHE_NAME` | Local disk cache path for tiles |
+| `NUM_LEVELS` | Number of resolution levels in the quadtree |
+| `NUM_EMPTY_LEVELS` | Number of lowest-resolution levels containing no data |
+| `TILE_HEIGHT` / `TILE_WIDTH` | Tile dimensions in pixels |
+| `SECTOR` | Geographic coverage of the model |
+| `LEVEL_ZERO_TILE_DELTA` | Angular size of level-0 tiles |
+| `FORMAT_SUFFIX` | Tile file extension (e.g., `.bil`, `.tif`) |
+| `ELEVATION_MIN` / `ELEVATION_MAX` | Extreme values for this dataset |
+| `MISSING_DATA_SIGNAL` | Sentinel value for missing data cells |
+
+### Detail Hint (LOD)
+
+```java title="Tuning level of detail"
+BasicElevationModel model = ...;
+
+// Positive values → request more detail (higher resolution)
+// Negative values → request less detail (fewer tiles loaded)
+model.setDetailHint(0.5);   // 50% more detail than default
+System.out.println(model.getDetailHint(sector)); // per-sector LOD hint
+```
+
+### Bulk Download
+
+`BasicElevationModel` implements `BulkRetrievable`, which allows downloading all elevation tiles for a sector to the local disk cache before they are needed for rendering:
+
+```java title="Bulk downloading elevation tiles"
+// Estimate the download size (in bytes) for a sector and resolution
+long estimatedBytes = model.getEstimatedMissingDataSize(sector, 1e-5, null);
+System.out.printf("Approx download: %.2f MB%n", estimatedBytes / 1e6);
+
+// Start the bulk download (runs in a background thread)
+BulkRetrievalThread thread = model.makeLocal(sector, 1e-5, null, null);
+```
+
+---
+
+## ZeroElevationModel
+
+`gov.nasa.worldwind.terrain.ZeroElevationModel` extends `AbstractElevationModel` and unconditionally returns **zero** for all elevation queries. It is used in flat-earth scenarios, ocean-only views, or whenever terrain relief should be ignored.
+
+```java title="Using ZeroElevationModel"
+// Attach to a globe for a perfectly flat surface
+Globe flatEarth = new Earth();
+flatEarth.setElevationModel(new ZeroElevationModel());
+
+// All elevation queries now return 0.0
+double elev = flatEarth.getElevation(
+    Angle.fromDegrees(40.0), Angle.fromDegrees(-74.0)); // 0.0
+```
+
+---
+
+## LocalElevationModel
+
+`gov.nasa.worldwind.terrain.LocalElevationModel` extends `AbstractElevationModel` and loads elevation data from local files or in-memory buffers. It is useful for loading custom DEMs (Digital Elevation Models) from disk without configuring a tile service.
+
+### Loading Elevation Data
+
+```java title="Loading elevation data from local sources"
+LocalElevationModel local = new LocalElevationModel();
+
+// Load from a file path (GeoTIFF, BIL, DTED, etc.)
+local.addElevations("data/myDEM.tif");
+
+// Load from a java.io.File
+local.addElevations(new File("data/myDEM.bil"));
+
+// Load from a raw ByteBuffer with explicit extent and dimensions
+local.addElevations(byteBuffer, sector, width, height, params);
+```
+
+---
+
+## WMSBasicElevationModel
+
+`gov.nasa.worldwind.terrain.WMSBasicElevationModel` extends `BasicElevationModel` and retrieves elevation tiles from an **OGC Web Map Service (WMS)** server. It builds WMS `GetMap` requests to fetch elevation data at the required resolution and location.
+
+### Construction
+
+```java title="WMSBasicElevationModel constructors"
+// From WMS capabilities + parameters
+WMSCapabilities caps = WMSCapabilities.retrieve(new URI("https://example.com/wms?SERVICE=WMS"));
+caps.parse();
+
+AVList params = new AVListImpl();
+params.setValue(AVKey.LAYER_NAMES, "elevation_layer");
+WMSBasicElevationModel wmsModel = new WMSBasicElevationModel(caps, params);
+
+// From an XML configuration element
+WMSBasicElevationModel xmlModel = new WMSBasicElevationModel(domElement, null);
+
+// From a restorable state string
+WMSBasicElevationModel restoredModel = new WMSBasicElevationModel(restorableStateXml);
+```
+
+---
+
+## WCSElevationModel
+
+`gov.nasa.worldwind.terrain.WCSElevationModel` extends `BasicElevationModel` and retrieves elevation data from an **OGC Web Coverage Service (WCS)** server. WCS returns raw raster coverage data (elevation grids) rather than rendered images, making it more precise for terrain data than WMS.
+
+### Construction
+
+```java title="WCSElevationModel constructors"
+// From WCS 1.0 capabilities + parameters
+WCS100Capabilities wcsCaps = WCS100Capabilities.retrieve(new URI("https://wcs.example.com/wcs"));
+wcsCaps.parse();
+
+AVList params = new AVListImpl();
+params.setValue(AVKey.COVERAGE_IDENTIFIERS, "myCoverage");
+WCSElevationModel wcsModel = new WCSElevationModel(wcsCaps, params);
+
+// From an XML configuration element
+WCSElevationModel xmlModel = new WCSElevationModel(domElement, null);
+```
+
+---
+
+## HighResolutionTerrain
+
+`gov.nasa.worldwind.terrain.HighResolutionTerrain` extends `WWObjectImpl` and implements the `Terrain` interface. It provides **accurate** terrain queries using the **highest available resolution** elevation data, blocking the calling thread while it retrieves any missing tiles from disk cache or a remote server. It is the primary tool for line-of-sight calculations, terrain profiles, and visibility analysis.
+
+### Constructors
+
+```java title="HighResolutionTerrain constructors"
+Globe globe = new Earth();
+
+// Terrain for the entire globe at the specified resolution (meters)
+HighResolutionTerrain terrain = new HighResolutionTerrain(globe, 10.0);
+// targetResolution = 10.0 meters; null = use globe's best available resolution
+HighResolutionTerrain bestRes = new HighResolutionTerrain(globe, null);
+
+// Terrain for a specific sector only, with vertical exaggeration
+HighResolutionTerrain regional = new HighResolutionTerrain(
+    globe,
+    Sector.fromDegrees(36, 37, -117, -116), // constrain to this region
+    30.0,                                    // target resolution in meters
+    1.0                                      // vertical exaggeration (null = 1.0)
+);
+```
+
+### Line-of-Sight and Intersection
+
+All `intersect` methods **block** until sufficient terrain data is available or the configured timeout is exceeded. They return `null` if no intersection occurs.
+
+```java title="Line-of-sight between two positions"
+Position pA = Position.fromDegrees(37.0, -122.0, 1500.0); // observer, 1500m AGL
+Position pB = Position.fromDegrees(37.1, -121.9, 1500.0); // target,   1500m AGL
+
+// Intersect a line segment with the terrain mesh
+// pA and pB altitudes are interpreted as relative-to-ground
+Intersection[] hits = terrain.intersect(pA, pB);
+
+if (hits != null && hits.length > 0) {
+    System.out.println("Terrain blocks the line of sight.");
+    Vec4     blockPt  = hits[0].getIntersectionPoint();
+    Position blockPos = globe.computePositionFromPoint(blockPt);
+    System.out.printf("First obstruction at: %.4f°, %.4f°, %.1f m%n",
+        blockPos.latitude.degrees,
+        blockPos.longitude.degrees,
+        blockPos.elevation);
+} else {
+    System.out.println("Clear line of sight.");
+}
+```
+
+### Altitude Mode
+
+```java title="Intersect with absolute altitudes"
+// altitudeMode values: WorldWind.ABSOLUTE, WorldWind.RELATIVE_TO_GROUND,
+//                      WorldWind.CLAMP_TO_GROUND
+Intersection[] hitsAbs = terrain.intersect(pA, pB, WorldWind.ABSOLUTE);
+```
+
+### Batch Intersection with Callback
+
+For bulk line-of-sight calculations (e.g., viewshed analysis), use the `IntersectionCallback` interface to receive results asynchronously without allocating large arrays:
+
+```java title="Batch intersection with a callback"
+List<Position> positions = Arrays.asList(
+    Position.fromDegrees(37.0, -122.0, 100),
+    Position.fromDegrees(37.1, -121.9, 100),
+    Position.fromDegrees(37.0, -122.0, 100),
+    Position.fromDegrees(37.2, -121.8, 100)
+    // positions are treated as pairs: (p0,p1), (p2,p3), ...
+);
+
+terrain.intersect(positions, new HighResolutionTerrain.IntersectionCallback() {
+    @Override
+    public void intersection(Position pA, Position pB, Intersection[] intersections) {
+        if (intersections != null) {
+            System.out.printf("Blocked between %s and %s%n", pA, pB);
+        }
+    }
+    @Override
+    public void exception(Exception e) {
+        e.printStackTrace();
+    }
+});
+```
+
+### Summary of Intersect Methods
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `intersect(Position, Position)` | `Intersection[]` | Line-of-sight, relative-to-ground altitudes |
+| `intersect(Position, Position, int)` | `Intersection[]` | Line-of-sight with explicit altitude mode |
+| `intersect(List<Position>, IntersectionCallback)` | `void` | Batch LOD-aware intersection with callback |
+| `intersect(Line)` | `Intersection[]` | Deprecated — prefer `intersect(Position, Position)` |
+
+### Timeout and Cache
+
+```java title="Timeout and cache management"
+// Set a maximum wait time in milliseconds for tile retrieval
+terrain.setTimeout(30000L); // 30 seconds; 0 = wait indefinitely
+
+// Inspect internal cache usage
+double cacheUsage = terrain.getCacheUsage();  // fraction 0.0–1.0
+int numEntries    = terrain.getNumCacheEntries();
+```
+
+<Note>
+`HighResolutionTerrain` maintains an internal `BasicMemoryCache` of tessellated tile geometry. For large-scale viewshed or terrain-profile operations, call `terrain.setTimeout(...)` to prevent the analysis from blocking indefinitely on missing remote tiles.
+</Note>
+
+---
+
+## Tessellator
+
+`gov.nasa.worldwind.terrain.Tessellator` is the interface responsible for converting elevation data into renderable 3D mesh geometry. The `Globe` delegates tessellation to the tessellator during each render frame.
+
+### Interface
+
+```java title="Tessellator interface"
+// The Globe calls tessellate() once per frame to generate visible geometry
+SectorGeometryList geomList = tessellator.tessellate(drawContext);
+
+// Whether tile "skirts" are generated to hide gaps between adjacent LOD tiles
+boolean hasSkirts = tessellator.isMakeTileSkirts();
+tessellator.setMakeTileSkirts(true);
+```
+
+### RectangularTessellator
+
+`gov.nasa.worldwind.terrain.RectangularTessellator` is the default `Tessellator` implementation. It divides the globe surface into a quadtree of rectangular `Sector`-aligned tiles and dynamically selects tile density (triangle count) based on the eye distance to each tile — producing high-resolution geometry where the camera is close and coarser geometry at distance.
+
+```java title="Accessing and replacing the RectangularTessellator"
+Globe globe = new Earth();
+Tessellator tess = globe.getTessellator(); // returns the default RectangularTessellator
+
+// Replace with a custom tessellator
+globe.setTessellator(myCustomTessellator);
+
+// Restore to the default tessellator (configured via AVKey.TESSELLATOR_CLASS_NAME)
+globe.setTessellator(null);
+```
+
+### SectorGeometry and SectorGeometryList
+
+The output of tessellation is a `SectorGeometryList` — a collection of `SectorGeometry` objects, each representing a single LOD tile. Layers and renderables interact with `SectorGeometry` to:
+
+- Apply textures and imagery
+- Perform per-tile picking
+- Compute intersections between renderables and the terrain surface
+
+```java title="Working with tessellation output"
+SectorGeometryList geomList = globe.tessellate(dc);
+
+for (SectorGeometry tile : geomList) {
+    Sector tileSector = tile.getSector();
+    // Each tile exposes its rendered geometry for picking, texturing, etc.
+    tile.renderMultiTexture(dc, 1);  // render with one texture unit
+}
+```
+
+### Code Example: Complete Terrain Elevation Profile
+
+```java title="Sampling a terrain elevation profile along a great circle"
+Globe globe = new Earth();
+HighResolutionTerrain terrain = new HighResolutionTerrain(globe, 30.0);
+terrain.setTimeout(20000L);
+
+// Sample 100 points along a great-circle path
+Position start = Position.fromDegrees(37.0, -122.0, 0);
+Position end   = Position.fromDegrees(37.5, -121.0, 0);
+
+List<double[]> profile = new ArrayList<>();
+for (int i = 0; i <= 100; i++) {
+    double t = i / 100.0;
+    LatLon ll = LatLon.interpolateGreatCircle(t, start, end);
+
+    Angle lat = ll.getLatitude();
+    Angle lon = ll.getLongitude();
+
+    // Get full-resolution surface elevation (blocks until data available)
+    double elev = terrain.getElevation(new Position(ll, 0));
+    double distM = LatLon.greatCircleDistance(start, ll).radians
+                   * globe.getEquatorialRadius();
+
+    profile.add(new double[]{distM, elev});
+}
+
+// profile now holds [distanceMeters, elevationMeters] pairs along the path
+for (double[] pt : profile) {
+    System.out.printf("%.0f m  ->  %.1f m elevation%n", pt[0], pt[1]);
+}
+```

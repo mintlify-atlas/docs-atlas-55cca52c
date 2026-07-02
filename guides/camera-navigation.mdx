@@ -1,0 +1,239 @@
+---
+title: "Camera Navigation and View Control in WorldWind Java"
+sidebarTitle: "Camera & Navigation"
+description: "Control the WorldWind Java camera with orbit and first-person views, fly-to animations, view limits, and programmatic navigation using the View and BasicOrbitView APIs."
+---
+
+WorldWind Java's view system separates the camera model from rendering. The `View` interface defines the contract for a camera that can compute a modelview matrix and eye position from geographic state. Two concrete implementations cover the most common use cases: `BasicOrbitView` for the familiar orbit-around-a-point model, and `BasicFlyView` for a first-person, fly-through perspective. Both views support smooth animated transitions, configurable limits, and on-screen control widgets.
+
+## View Types
+
+| Class | Package | Description |
+|---|---|---|
+| `BasicOrbitView` | `gov.nasa.worldwind.view.orbit` | Default view. Orbits around a center `Position` with zoom, heading, and pitch. |
+| `BasicFlyView` | `gov.nasa.worldwind.view.firstperson` | First-person view. The camera is positioned at an eye `Position` with heading and pitch. |
+
+To change the active view, call `wwd.setView(View)`:
+
+```java ViewControls.java — switching the active view
+import gov.nasa.worldwind.view.orbit.BasicOrbitView;
+import gov.nasa.worldwind.view.firstperson.BasicFlyView;
+
+// Retrieve the current view (default is BasicOrbitView).
+View currentView = wwd.getView();
+
+// Install a first-person fly view instead.
+BasicFlyView flyView = new BasicFlyView();
+wwd.setView(flyView);
+```
+
+## Orbit View
+
+`BasicOrbitView` is the default WorldWind camera. It orbits around a geographic center position. The key state properties are:
+
+| Property | Method | Description |
+|---|---|---|
+| Center position | `getCenterPosition()` / `setCenterPosition(Position)` | The globe position being orbited. |
+| Zoom | `getZoom()` / `setZoom(double)` | Distance from eye to center in meters. |
+| Heading | `getHeading()` / `setHeading(Angle)` | Compass bearing of the view (0 = north). |
+| Pitch | `getPitch()` / `setPitch(Angle)` | Tilt angle from nadir; 0 = looking straight down, 90 = horizontal. |
+
+```java ViewIteration.java — reading and setting orbit view state
+import gov.nasa.worldwind.view.orbit.BasicOrbitView;
+import gov.nasa.worldwind.geom.*;
+
+BasicOrbitView view = (BasicOrbitView) wwd.getView();
+
+// Read current state.
+Position center  = view.getCenterPosition();
+double zoom      = view.getZoom();
+Angle heading    = view.getHeading();
+Angle pitch      = view.getPitch();
+
+System.out.printf("Center: %s  Zoom: %.0f m  Heading: %.1f°  Pitch: %.1f°%n",
+    center, zoom, heading.degrees, pitch.degrees);
+
+// Move the center to London, zoom to 500 km, look north, tilt 60°.
+view.setCenterPosition(Position.fromDegrees(51.5, -0.12, 0));
+view.setZoom(500_000);
+view.setHeading(Angle.fromDegrees(0));
+view.setPitch(Angle.fromDegrees(60));
+wwd.redraw();
+```
+
+<Tip>
+Always call `wwd.redraw()` after making programmatic changes to the view state. WorldWind does not automatically repaint when view properties are set — `redraw()` schedules a new frame so your changes appear immediately.
+</Tip>
+
+## Flying to a Position
+
+`BasicOrbitView` supports smooth animated transitions via `addEyePositionAnimator()` and `addHeadingAnimator()`. Animations queue on the `OrbitViewInputHandler` and run over a specified duration in milliseconds.
+
+```java ViewIteration.java — animated fly-to a position
+import gov.nasa.worldwind.view.orbit.BasicOrbitView;
+import gov.nasa.worldwind.geom.*;
+
+BasicOrbitView view = (BasicOrbitView) wwd.getView();
+
+// Fly the eye to a new position over 4 seconds (4000 ms).
+Position target = Position.fromDegrees(48.8566, 2.3522, 100_000); // Paris
+view.addEyePositionAnimator(4000, view.getEyePosition(), target);
+
+// Animate heading from current to 90° east over 4 seconds.
+view.addHeadingAnimator(view.getHeading(), Angle.fromDegrees(90));
+
+// Animate pitch separately.
+view.addPitchAnimator(view.getPitch(), Angle.fromDegrees(45));
+
+// Animate zoom distance.
+view.addZoomAnimator(view.getZoom(), 50_000);
+```
+
+For looping through a list of positions, build an `ArrayList<Position>` and call `addEyePositionAnimator` in sequence:
+
+```java ViewIteration.java — iterating through a list of positions
+import java.util.ArrayList;
+
+ArrayList<Position> path = new ArrayList<>();
+path.add(Position.fromDegrees(0,  0,  1e5));
+path.add(Position.fromDegrees(0, 10,  1e5));
+path.add(Position.fromDegrees(0, 20,  1e5));
+path.add(Position.fromDegrees(0, 30,  1e5));
+
+// Queue all animations; they execute sequentially.
+for (Position p : path) {
+    view.addEyePositionAnimator(4000, view.getEyePosition(), p);
+}
+```
+
+## View Limits
+
+`BasicOrbitView` uses a `BasicOrbitViewLimits` instance (implementing `OrbitViewLimits`) to clamp all incoming view property changes. Limits are applied automatically every time `setCenterPosition`, `setHeading`, `setPitch`, or `setZoom` is called.
+
+```java BasicOrbitViewLimits — restricting view properties
+import gov.nasa.worldwind.view.orbit.*;
+import gov.nasa.worldwind.geom.*;
+
+BasicOrbitView view = (BasicOrbitView) wwd.getView();
+BasicOrbitViewLimits limits = (BasicOrbitViewLimits) view.getOrbitViewLimits();
+
+// Restrict zoom to between 1 km and 10,000 km.
+limits.setZoomLimits(1_000, 10_000_000);
+
+// Restrict center to a geographic bounding box.
+limits.setCenterLocationLimits(
+    Sector.fromDegrees(24.0, 50.0, -125.0, -65.0)); // Continental US
+
+// Restrict center elevation (useful for flat-earth or clamped-to-ground scenarios).
+limits.setCenterElevationLimits(-1000, 8849); // Below sea level to Everest
+
+// setHeadingLimits and setPitchLimits are inherited from BasicViewPropertyLimits.
+limits.setHeadingLimits(Angle.fromDegrees(-180), Angle.fromDegrees(180));
+limits.setPitchLimits(Angle.fromDegrees(0), Angle.fromDegrees(90));
+```
+
+## View Controls Layer
+
+WorldWind's `ViewControlsLayer` renders an on-screen HUD with pan, zoom, heading, pitch, and field-of-view controls. The layer works in conjunction with a `ViewControlsSelectListener` that translates cursor clicks on the controls into view state changes.
+
+```java ViewControls.java — adding the built-in view controls
+import gov.nasa.worldwind.layers.*;
+
+// The ViewControlsLayer is included by default in the model's layer list.
+// Locate it:
+ViewControlsLayer viewControlsLayer = null;
+for (Layer layer : wwd.getModel().getLayers()) {
+    if (layer instanceof ViewControlsLayer) {
+        viewControlsLayer = (ViewControlsLayer) layer;
+        break;
+    }
+}
+
+// Configure which controls are visible.
+if (viewControlsLayer != null) {
+    viewControlsLayer.setShowPanControls(true);
+    viewControlsLayer.setShowZoomControls(true);
+    viewControlsLayer.setShowHeadingControls(true);
+    viewControlsLayer.setShowPitchControls(true);
+    viewControlsLayer.setShowLookControls(false);   // first-person look controls
+    viewControlsLayer.setShowFovControls(false);    // field-of-view controls
+
+    // Scale the widget size (1.0 = default).
+    viewControlsLayer.setScale(1.5);
+
+    // Arrange controls horizontally or vertically.
+    viewControlsLayer.setLayout(AVKey.HORIZONTAL);
+}
+wwd.redraw();
+```
+
+To create a `ViewControlsLayer` from scratch (e.g., in a custom model):
+
+```java ViewControls.java — creating a new ViewControlsLayer
+ViewControlsLayer controlsLayer = new ViewControlsLayer();
+wwd.getModel().getLayers().add(controlsLayer);
+wwd.addSelectListener(new ViewControlsSelectListener(wwd, controlsLayer));
+```
+
+## Input Handling
+
+Mouse and keyboard navigation gestures are managed by a `ViewInputHandler`. `BasicOrbitView` uses `OrbitViewInputHandler` by default; `BasicFlyView` uses `FlyViewInputHandler`. The active input handler is accessed via `view.getViewInputHandler()`.
+
+`ViewInputAttributes` (accessible from the input handler) defines gesture-to-action bindings. You can modify mouse sensitivity, disable specific gestures, or configure keyboard shortcuts:
+
+```java AWTInputHandler — customizing input gestures
+import gov.nasa.worldwind.awt.ViewInputHandler;
+
+ViewInputHandler handler = wwd.getView().getViewInputHandler();
+
+// Temporarily freeze the view to prevent user navigation.
+handler.setEnabled(false);
+// ... do programmatic animation ...
+handler.setEnabled(true);
+```
+
+## Programmatic View Iteration
+
+The `ViewIteration` example (`gov.nasa.worldwindx.examples.ViewIteration`) demonstrates sequencing through a waypoint list with heading changes. The pattern chains multiple `addEyePositionAnimator` calls — each enqueues a segment of the journey:
+
+```java ViewIteration.java — animating forward and backward through waypoints
+import gov.nasa.worldwind.view.orbit.BasicOrbitView;
+import gov.nasa.worldwind.geom.*;
+
+// Move forward one step in the path.
+BasicOrbitView view = (BasicOrbitView) wwd.getView();
+view.setHeading(Angle.fromDegrees(90)); // face east before animating
+view.addEyePositionAnimator(4000,
+    view.getEyePosition(),
+    path.get(nextIndex));
+
+// Move backward one step.
+view.addEyePositionAnimator(4000,
+    view.getEyePosition(),
+    path.get(previousIndex));
+
+// Animate only the heading (pan-in-place).
+Angle targetHeading = LatLon.greatCircleAzimuth(currentPos, nextPos);
+view.addHeadingAnimator(view.getHeading(), targetHeading);
+```
+
+## First-Person View
+
+`BasicFlyView` (in `gov.nasa.worldwind.view.firstperson`) positions the camera directly at a geographic `Position`, unlike `BasicOrbitView` which orbits around a center. This is suitable for street-level viewing, fly-throughs, or terrain-following simulations.
+
+```java BasicFlyView — configuring the first-person view
+import gov.nasa.worldwind.view.firstperson.*;
+import gov.nasa.worldwind.geom.*;
+
+BasicFlyView flyView = new BasicFlyView();
+
+// Place the camera 200 m above the Eiffel Tower.
+flyView.setEyePosition(Position.fromDegrees(48.8584, 2.2945, 200));
+flyView.setHeading(Angle.fromDegrees(0));   // looking north
+flyView.setPitch(Angle.fromDegrees(80));    // near-horizontal look
+
+wwd.setView(flyView);
+wwd.redraw();
+```
+
+`BasicFlyView` uses `FlyViewInputHandler` for navigation and `FlyViewLimits` for property clamping — both found in the `gov.nasa.worldwind.view.firstperson` package. `FlyToFlyViewAnimator` provides smooth animated transitions equivalent to `addEyePositionAnimator` for orbit views.

@@ -1,0 +1,264 @@
+---
+title: "Loading Imagery and Elevation Data into WorldWind"
+sidebarTitle: "Imagery & Elevation"
+description: "Load satellite imagery and elevation data into NASA WorldWind Java using tiled image layers, WMS sources, local GeoTIFF files, and custom elevation models."
+---
+
+NASA WorldWind Java separates the globe's visual appearance into two independent data streams: **imagery** (color tiles painted on the globe surface) and **elevation** (a height field that shapes the 3D terrain mesh). Both are managed through a pluggable model system — imagery through `Layer` subclasses added to the `LayerList`, and elevation through `ElevationModel` implementations attached to the `Globe`. Understanding this architecture lets you mix and overlay satellite products, local raster files, WMS services, and custom elevation grids in a single scene.
+
+## Tiled Image Layers
+
+The primary mechanism for serving imagery in WorldWind is the **tiled image layer** system. The abstract base `TiledImageLayer` divides the globe into a hierarchy of geographic tiles at increasing levels of detail. `BasicTiledImageLayer` is the standard concrete implementation and also implements `BulkRetrievable` for offline pre-caching.
+
+Key configuration parameters (passed as an `AVList`):
+
+| `AVKey` constant | Description |
+|---|---|
+| `AVKey.LEVEL_ZERO_TILE_DELTA` | Tile size at level 0 (a `LatLon`, e.g., 36°×36°) |
+| `AVKey.NUM_LEVELS` | Total number of detail levels |
+| `AVKey.NUM_EMPTY_LEVELS` | Coarsest levels with no imagery (skipped at startup) |
+| `AVKey.FORMAT_SUFFIX` | File extension for cached tiles (e.g., `".dds"`, `".jpg"`) |
+| `AVKey.DATA_CACHE_NAME` | Cache folder name under the WorldWind file store |
+| `AVKey.TILE_WIDTH` / `AVKey.TILE_HEIGHT` | Pixel dimensions of each tile (commonly 512) |
+| `AVKey.DATASET_NAME` | Logical name for the dataset |
+
+```java ConfigureTiledImageLayer.java
+import gov.nasa.worldwind.avlist.AVKey;
+import gov.nasa.worldwind.avlist.AVListImpl;
+import gov.nasa.worldwind.geom.LatLon;
+import gov.nasa.worldwind.layers.BasicTiledImageLayer;
+import gov.nasa.worldwind.util.LevelSet;
+
+AVListImpl params = new AVListImpl();
+params.setValue(AVKey.TILE_WIDTH, 512);
+params.setValue(AVKey.TILE_HEIGHT, 512);
+params.setValue(AVKey.DATA_CACHE_NAME, "MyApp/MyImagery");
+params.setValue(AVKey.SERVICE, "https://example.com/wms");
+params.setValue(AVKey.DATASET_NAME, "BlueMarble");
+params.setValue(AVKey.FORMAT_SUFFIX, ".dds");
+params.setValue(AVKey.NUM_LEVELS, 12);
+params.setValue(AVKey.NUM_EMPTY_LEVELS, 0);
+params.setValue(AVKey.LEVEL_ZERO_TILE_DELTA,
+    LatLon.fromDegrees(36.0, 36.0));
+
+BasicTiledImageLayer imageLayer = new BasicTiledImageLayer(
+    new LevelSet(params), params);
+imageLayer.setName("My Imagery");
+```
+
+Tiles are retrieved asynchronously by WorldWind's retrieval service and stored in the local file store (by default `~/.worldwind/`). Subsequent application launches reuse cached tiles without a network round-trip.
+
+## WMS Imagery Layers
+
+WorldWind ships `WMSTiledImageLayer` — a subclass of `BasicTiledImageLayer` — that constructs GetMap request URLs from a `WMSCapabilities` document. The `WMSLayersPanel` UI component (used in the `WMSLayerManager` example) demonstrates the complete pattern.
+
+```java CreateWMSImageLayer.java
+import gov.nasa.worldwind.avlist.AVKey;
+import gov.nasa.worldwind.avlist.AVListImpl;
+import gov.nasa.worldwind.ogc.wms.WMSCapabilities;
+import gov.nasa.worldwind.wms.WMSTiledImageLayer;
+
+import java.net.URI;
+
+// 1. Retrieve the capabilities document from the server
+WMSCapabilities caps = WMSCapabilities.retrieve(
+    new URI("https://neowms.sci.gsfc.nasa.gov/wms/wms"));
+caps.parse();
+
+// 2. Build the AVList parameters for the desired layer
+AVListImpl params = new AVListImpl();
+params.setValue(AVKey.LAYER_NAMES,  "MOD_LSTD_CLIM_M"); // WMS layer name
+params.setValue(AVKey.STYLE_NAMES,  "");
+params.setValue(AVKey.IMAGE_FORMAT, "image/png");
+
+// 3. Construct the tiled image layer
+WMSTiledImageLayer wmsLayer = new WMSTiledImageLayer(caps, params);
+wmsLayer.setName("MODIS Land Surface Temperature");
+
+// 4. Add to the WorldWindow's layer list
+wwd.getModel().getLayers().add(wmsLayer);
+```
+
+<Note>
+`WMSTiledImageLayer` builds tile URLs automatically from the `WMSCapabilities` bounding boxes, projection, and version. For servers that advertise `application/bil` format, WorldWind's factory system may instead create a `WMSBasicElevationModel`, so always check `caps.getImageFormats()` before deciding which product to instantiate.
+</Note>
+
+The `WMSLayersPanel` helper component (in `gov.nasa.worldwindx.examples`) encapsulates this pattern in a Swing UI that lists all named layers from a server URL and lets the user toggle them on and off. Pass it a `WorldWindow`, a server URL string, and a preferred `Dimension`:
+
+```java UseWMSLayersPanel.java
+import gov.nasa.worldwindx.examples.WMSLayersPanel;
+import java.awt.Dimension;
+
+WMSLayersPanel panel = new WMSLayersPanel(
+    wwd,
+    "https://neowms.sci.gsfc.nasa.gov/wms/wms",
+    new Dimension(400, 600));
+```
+
+## Local Raster Imagery
+
+### SurfaceImageLayer
+
+`SurfaceImageLayer` (in `gov.nasa.worldwind.layers`) is a `RenderableLayer` subclass that accepts local image files and automatically reprojects them to geographic coordinates when geo-referencing metadata is present. It handles GeoTIFF, JPEG2000, and other formats supported by the registered `DataRasterReader` implementations.
+
+```java LoadLocalGeoTIFF.java
+import gov.nasa.worldwind.geom.Sector;
+import gov.nasa.worldwind.layers.SurfaceImageLayer;
+
+SurfaceImageLayer imageLayer = new SurfaceImageLayer();
+imageLayer.setName("Local GeoTIFF");
+imageLayer.setPickEnabled(false);
+
+// addImage(path) reads projection metadata automatically
+imageLayer.addImage("/data/imagery/colorado.tif");
+
+// Or supply the sector explicitly when there is no world-file
+imageLayer.addImage("/data/imagery/texture.jpg",
+    Sector.fromDegrees(37.0, 41.0, -109.0, -102.0));
+
+wwd.getModel().getLayers().add(imageLayer);
+```
+
+### SurfaceImage (single renderable)
+
+For a single georeferenced image added directly to any `RenderableLayer`, use the `SurfaceImage` renderable. Corners are specified as an ordered list of `LatLon` points (counter-clockwise from lower-left):
+
+```java AddSurfaceImage.java
+import gov.nasa.worldwind.geom.LatLon;
+import gov.nasa.worldwind.layers.RenderableLayer;
+import gov.nasa.worldwind.render.SurfaceImage;
+
+import java.util.Arrays;
+
+SurfaceImage si = new SurfaceImage(
+    "images/satellite_patch.png",
+    Arrays.asList(
+        LatLon.fromDegrees(20.0, -115.0),
+        LatLon.fromDegrees(20.0, -105.0),
+        LatLon.fromDegrees(32.0, -102.0),
+        LatLon.fromDegrees(30.0, -115.0)
+    ));
+
+RenderableLayer layer = new RenderableLayer();
+layer.setPickEnabled(false);
+layer.addRenderable(si);
+wwd.getModel().getLayers().add(layer);
+```
+
+## Custom Elevation Models
+
+WorldWind separates terrain elevation from imagery through the `ElevationModel` interface. The active elevation model is held by the `Globe` object and can be a single model or a `CompoundElevationModel` that composites multiple sources.
+
+### BasicElevationModel
+
+`BasicElevationModel` is the standard tiled elevation implementation, configured the same way as `BasicTiledImageLayer` via an `AVList`. It also implements `BulkRetrievable` and supports formats like BIL (binary interleaved), DTED, and GeoTIFF via the configured `DataRasterReader`.
+
+```java ConfigureElevationModel.java
+import gov.nasa.worldwind.avlist.AVKey;
+import gov.nasa.worldwind.avlist.AVListImpl;
+import gov.nasa.worldwind.geom.LatLon;
+import gov.nasa.worldwind.terrain.BasicElevationModel;
+import gov.nasa.worldwind.util.LevelSet;
+
+AVListImpl params = new AVListImpl();
+params.setValue(AVKey.TILE_WIDTH, 150);
+params.setValue(AVKey.TILE_HEIGHT, 150);
+params.setValue(AVKey.DATA_CACHE_NAME, "MyApp/SRTM30");
+params.setValue(AVKey.SERVICE, "https://data.worldwind.arc.nasa.gov/elev");
+params.setValue(AVKey.DATASET_NAME, "srtm30");
+params.setValue(AVKey.FORMAT_SUFFIX, ".bil");
+params.setValue(AVKey.NUM_LEVELS, 12);
+params.setValue(AVKey.ELEVATION_MIN, -11000.0);
+params.setValue(AVKey.ELEVATION_MAX,   8850.0);
+params.setValue(AVKey.LEVEL_ZERO_TILE_DELTA, LatLon.fromDegrees(20.0, 20.0));
+
+BasicElevationModel dem = new BasicElevationModel(
+    new LevelSet(params), params);
+```
+
+### LocalElevationModel
+
+`LocalElevationModel` reads elevation data directly from local files without a tile hierarchy — ideal for small regional datasets or offline deployments. Call `addElevations(File)` or `addElevations(String filename)` to load each file:
+
+```java LoadLocalElevation.java
+import gov.nasa.worldwind.terrain.LocalElevationModel;
+
+LocalElevationModel localDEM = new LocalElevationModel();
+
+// Load from local DTED or GeoTIFF files
+localDEM.addElevations("/data/elevation/colorado_30m.tif");
+localDEM.addElevations("/data/elevation/utah_30m.tif");
+```
+
+<Note>
+`LocalElevationModel` is best constructed off the Event Dispatch Thread. Loading large raster files synchronously on the EDT will freeze the UI. Use a `SwingWorker` or a background thread, then update the globe's elevation model on completion.
+</Note>
+
+### CompoundElevationModel
+
+To combine multiple elevation sources — for example, a coarse global DEM with a fine-resolution local patch on top — wrap them in a `CompoundElevationModel`. Models added at lower indices have lower priority; models added later take precedence in areas they cover:
+
+```java ComposeElevationModels.java
+import gov.nasa.worldwind.terrain.CompoundElevationModel;
+import gov.nasa.worldwind.terrain.LocalElevationModel;
+
+CompoundElevationModel compound = new CompoundElevationModel();
+
+// Add the global base model first (lower priority)
+compound.addElevationModel(globalDEM);
+
+// Add a high-resolution local patch (higher priority)
+LocalElevationModel localPatch = new LocalElevationModel();
+localPatch.addElevations("/data/elevation/highres_patch.tif");
+compound.addElevationModel(localPatch);
+
+// Replace the globe's elevation model
+wwd.getModel().getGlobe().setElevationModel(compound);
+```
+
+## WCS Elevation
+
+For elevation data exposed through an OGC Web Coverage Service (WCS), use `WCSElevationModel`. It is constructed from a `WCS100Capabilities` document and an `AVList` specifying coverage parameters:
+
+```java CreateWCSElevationModel.java
+import gov.nasa.worldwind.avlist.AVKey;
+import gov.nasa.worldwind.avlist.AVListImpl;
+import gov.nasa.worldwind.ogc.wcs.wcs100.WCS100Capabilities;
+import gov.nasa.worldwind.terrain.WCSElevationModel;
+
+WCS100Capabilities wcsCaps = WCS100Capabilities.retrieve(
+    new java.net.URI("https://data.worldwind.arc.nasa.gov/elev"));
+wcsCaps.parse();
+
+AVListImpl wcsParams = new AVListImpl();
+wcsParams.setValue(AVKey.IDENTIFIER, "SRTM30");
+wcsParams.setValue(AVKey.FORMAT_SUFFIX, ".bil");
+
+WCSElevationModel wcsModel = new WCSElevationModel(wcsCaps, wcsParams);
+wwd.getModel().getGlobe().setElevationModel(wcsModel);
+```
+
+## Bulk Download
+
+Both `BasicTiledImageLayer` and `BasicElevationModel` implement the `BulkRetrievable` interface, which allows pre-caching all tiles for a sector and resolution level before going offline. Call `makeLocal(Sector, double, BulkRetrievalListener)` to start a `BulkRetrievalThread`:
+
+```java BulkDownloadTiles.java
+import gov.nasa.worldwind.geom.Sector;
+import gov.nasa.worldwind.retrieve.BulkRetrievalThread;
+import gov.nasa.worldwind.terrain.BasicElevationModel;
+
+Sector targetSector = Sector.fromDegrees(35.0, 45.0, -115.0, -100.0);
+double targetResolution = 100.0; // meters per pixel
+
+// Start downloading — runs in a background thread
+BulkRetrievalThread thread = dem.makeLocal(
+    targetSector,
+    targetResolution,
+    (event) -> System.out.printf("Progress: %.1f%%%n", event.getProgress() * 100));
+```
+
+The `BulkDownloadPanel` example component (`gov.nasa.worldwindx.examples.BulkDownloadPanel`) provides a ready-made Swing UI around this API, showing per-layer progress bars and estimated download sizes.
+
+<Note>
+Downloaded tiles are stored in the WorldWind file store (`WorldWind.getDataFileStore()`). By default this is `~/.worldwind/` on macOS/Linux and `%APPDATA%\.worldwind\` on Windows. You can redirect the file store location by setting the `gov.nasa.worldwind.platform.fileStoreLocation` configuration property.
+</Note>

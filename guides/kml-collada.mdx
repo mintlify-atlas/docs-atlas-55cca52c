@@ -1,0 +1,217 @@
+---
+title: "Parsing and Rendering KML/KMZ Files in WorldWind Java"
+sidebarTitle: "KML & COLLADA"
+description: "Load KML and KMZ files into NASA WorldWind Java using KMLRoot, render overlays and placemarks, and display 3D COLLADA models with the COLLADA parser."
+---
+
+NASA WorldWind Java includes a first-class KML/KMZ parser and renderer built on the same layer and renderable infrastructure used by all other WorldWind geometry. The `gov.nasa.worldwind.ogc.kml` package maps every KML element — placemarks, overlays, folders, network links, and more — to Java objects that implement `KMLRenderable`. A separate `gov.nasa.worldwind.ogc.collada` package handles the COLLADA 3D model format referenced from KML `<Model>` elements. Together, these subsystems let you ingest standard geo-data formats without writing any custom parsing code.
+
+## Loading KML
+
+The entry point for all KML/KMZ loading is `KMLRoot.createAndParse()`. It accepts a `File`, a `URL`, an `InputStream`, or a `String` path/URL, auto-detects whether the source is KML or KMZ, and returns a fully-parsed `KMLRoot` object.
+
+Once parsed, wrap the `KMLRoot` in a `KMLController` — an adapter that bridges the KML object tree to WorldWind's `Renderable` interface — and add the controller to a `RenderableLayer`:
+
+```java LoadKMLFile.java
+import gov.nasa.worldwind.avlist.AVKey;
+import gov.nasa.worldwind.layers.RenderableLayer;
+import gov.nasa.worldwind.ogc.kml.KMLAbstractFeature;
+import gov.nasa.worldwind.ogc.kml.KMLRoot;
+import gov.nasa.worldwind.ogc.kml.impl.KMLController;
+import gov.nasa.worldwind.util.WWIO;
+
+import java.io.File;
+
+// --- Parse in a background thread ---
+File kmlFile = new File("/data/placemarks.kml");
+KMLRoot kmlRoot = KMLRoot.createAndParse(kmlFile);
+
+// Set a display name from the root feature (or fall back to filename)
+KMLAbstractFeature rootFeature = kmlRoot.getFeature();
+String name = (rootFeature != null && rootFeature.getName() != null)
+    ? rootFeature.getName()
+    : kmlFile.getName();
+kmlRoot.setField(AVKey.DISPLAY_NAME, name);
+
+// --- Back on the EDT ---
+KMLController controller = new KMLController(kmlRoot);
+
+RenderableLayer layer = new RenderableLayer();
+layer.setName(name);
+layer.addRenderable(controller);
+
+wwd.getModel().getLayers().add(layer);
+wwd.redraw();
+```
+
+<Warning>
+`KMLRoot.createAndParse()` performs network I/O and XML parsing — it must **not** be called on the Swing Event Dispatch Thread. Use a background `Thread`, `SwingWorker`, or an `ExecutorService`. The `KMLViewer` example demonstrates this pattern via its `WorkerThread` inner class.
+</Warning>
+
+The `KMLViewer` example application (`gov.nasa.worldwindx.examples.kml.KMLViewer`) adds a `LayerTree` and `BalloonController` on top of the basic loading pattern to give users a full feature-tree UI and click-to-open info balloons.
+
+## KML Structure
+
+The KML object model mirrors the KML 2.2 specification. The key container and feature types are:
+
+| KML class | Description |
+|---|---|
+| `KMLDocument` | Root-level container; may hold styles and nested features |
+| `KMLFolder` | Logical grouping of features |
+| `KMLPlacemark` | A named feature with associated geometry (`KMLPoint`, `KMLLineString`, `KMLPolygon`, or `KMLMultiGeometry`) |
+| `KMLGroundOverlay` | An image draped on the terrain within a `LatLonBox` |
+| `KMLScreenOverlay` | A 2D image overlay in screen space (logo, legend, compass rose) |
+| `KMLNetworkLink` | A link to another KML/KMZ document loaded dynamically |
+
+Every feature extends `KMLAbstractFeature` and exposes `getName()`, `getDescription()`, `getVisibility()`, and `getAbstractView()` for camera positioning.
+
+WorldWind maps each feature to one or more `Renderable` objects:
+
+- `KMLPlacemark` with `KMLPoint` geometry → `PointPlacemark`
+- `KMLPlacemark` with `KMLLineString` → `Path`
+- `KMLPlacemark` with `KMLPolygon` → `SurfacePolygon` or `ExtrudedPolygon`
+- `KMLGroundOverlay` → `SurfaceImage`
+- `KMLModel` → COLLADA geometry node (see below)
+
+## KML Style
+
+Styles in KML control the visual appearance of features. WorldWind parses all standard style elements:
+
+| KML class | Applied to |
+|---|---|
+| `KMLStyle` | Inline or shared style definition |
+| `KMLStyleMap` | Maps normal/highlight states to `KMLStyle` instances |
+| `KMLIconStyle` | Icon image, scale, and color for `KMLPlacemark` points |
+| `KMLLineStyle` | Color and width for `KMLLineString` and polygon outlines |
+| `KMLPolyStyle` | Fill color and fill/outline flags for `KMLPolygon` |
+| `KMLLabelStyle` | Font color and scale for feature labels |
+
+Styles are resolved automatically during rendering — shared styles referenced by `<styleUrl>` are fetched from the KML document's style table and applied to the corresponding renderables.
+
+## KML Network Links
+
+`KMLNetworkLink` enables streaming and dynamically-updated KML by linking to an external document that can be refreshed on a timer or in response to camera changes. WorldWind's retrieval service fetches network link documents asynchronously.
+
+```java MonitorNetworkLinkRefresh.java
+import gov.nasa.worldwind.avlist.AVKey;
+import gov.nasa.worldwind.util.layertree.KMLLayerTreeNode;
+import gov.nasa.worldwind.util.layertree.KMLNetworkLinkTreeNode;
+
+import java.beans.PropertyChangeEvent;
+import java.beans.PropertyChangeListener;
+
+// After adding the KML layer tree node, listen for refresh events
+layerNode.addPropertyChangeListener(
+    AVKey.RETRIEVAL_STATE_SUCCESSFUL,
+    (PropertyChangeEvent event) -> {
+        if (event.getSource() instanceof KMLNetworkLinkTreeNode) {
+            javax.swing.SwingUtilities.invokeLater(() -> {
+                ((KMLNetworkLinkTreeNode) event.getSource())
+                    .expandOpenContainers(layerTree);
+                wwd.redraw();
+            });
+        }
+    });
+```
+
+<Warning>
+Network links require that WorldWind's retrieval service is running (it starts automatically when a `WorldWindow` is created, but may be shut down by calling `WorldWind.getRetrievalService().shutdown()`). If the retrieval service is not active, network link content will silently fail to load.
+</Warning>
+
+## COLLADA Models
+
+When a `KMLPlacemark` contains a `<Model>` element, WorldWind resolves the COLLADA model file referenced by the `<href>` inside the `<Link>` sub-element. The `gov.nasa.worldwind.ogc.collada` package provides a full COLLADA 1.4.1 parser that handles meshes, materials, textures, and hierarchical transforms.
+
+The key classes in the COLLADA subsystem:
+
+| Class | Description |
+|---|---|
+| `ColladaRoot` | Top-level parsed COLLADA document; analogous to `KMLRoot` |
+| `ColladaGeometry` | A mesh geometry node |
+| `ColladaEffect` | Material/shader definition |
+| `ColladaImage` | Texture image reference |
+| `ColladaAsset` | Document metadata (unit, up-axis, etc.) |
+
+COLLADA loading is transparent when KML is loaded normally — the `KMLModel` element triggers parsing of the linked `.dae` file automatically:
+
+```xml SampleKMLModel.kml
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Placemark>
+    <name>COLLADA Model</name>
+    <Model>
+      <altitudeMode>relativeToGround</altitudeMode>
+      <Location>
+        <longitude>-104.99</longitude>
+        <latitude>39.73</latitude>
+        <altitude>100</altitude>
+      </Location>
+      <Scale>
+        <x>1.0</x><y>1.0</y><z>1.0</z>
+      </Scale>
+      <Link>
+        <href>models/building.dae</href>
+      </Link>
+    </Model>
+  </Placemark>
+</kml>
+```
+
+Load this file through `KMLRoot.createAndParse()` as usual — WorldWind will automatically locate and render the COLLADA asset.
+
+## KML View Control
+
+WorldWind provides `KMLFlyViewController` and `KMLOrbitViewController` to animate the camera to a KML `<Camera>` or `<LookAt>` view. Both extend the base `KMLViewController`:
+
+```java AnimateToKMLView.java
+import gov.nasa.worldwindx.examples.kml.KMLFlyViewController;
+import gov.nasa.worldwindx.examples.kml.KMLOrbitViewController;
+import gov.nasa.worldwindx.examples.kml.KMLViewController;
+import gov.nasa.worldwind.ogc.kml.KMLAbstractView;
+
+// Factory method — selects Fly or Orbit controller based on the view type
+KMLViewController viewController = KMLViewController.create(wwd);
+
+// Animate to a KML feature's AbstractView
+KMLAbstractView view = placemark.getAbstractView();
+if (view != null)
+{
+    viewController.goTo(view);
+}
+```
+
+`KMLFlyViewController` uses `FlyToOrbitView` animation (smooth flight to a `<Camera>` position), while `KMLOrbitViewController` uses `BasicOrbitView` animation (orbit/pan to a `<LookAt>` view).
+
+## Exporting KML
+
+To serialize WorldWind shapes back to KML or KMZ, use `KMLDocumentBuilder` and `KMZDocumentBuilder` from the `gov.nasa.worldwindx.examples.kml` package. Both accept any `Exportable` object (including `Path`, `SurfacePolygon`, `PointPlacemark`, and `ExtrudedPolygon`):
+
+```java ExportShapesToKML.java
+import gov.nasa.worldwind.render.Path;
+import gov.nasa.worldwind.render.SurfacePolygon;
+import gov.nasa.worldwindx.examples.kml.KMLDocumentBuilder;
+import gov.nasa.worldwindx.examples.kml.KMZDocumentBuilder;
+
+import java.io.FileWriter;
+import java.io.FileOutputStream;
+
+// Export to a plain KML file
+try (FileWriter fw = new FileWriter("/output/shapes.kml"))
+{
+    KMLDocumentBuilder kmlBuilder = new KMLDocumentBuilder(fw);
+    kmlBuilder.writeObjects(myPath, myPolygon);
+    kmlBuilder.close();
+}
+
+// Export to a KMZ archive (ZIP containing doc.kml + resources)
+try (FileOutputStream fos = new FileOutputStream("/output/shapes.kmz"))
+{
+    KMZDocumentBuilder kmzBuilder = new KMZDocumentBuilder(fos);
+    kmzBuilder.writeObjects(myPath, myPolygon);
+    kmzBuilder.close();
+}
+```
+
+<Note>
+Only shapes that implement `gov.nasa.worldwind.Exportable` can be written to KML. All built-in WorldWind geometry types (`Path`, `SurfacePolygon`, `SurfacePolyline`, `PointPlacemark`, `ExtrudedPolygon`, etc.) implement `Exportable`. Custom renderables must implement the interface and handle the `EXPORT_FORMAT_KML` MIME type to participate in export.
+</Note>

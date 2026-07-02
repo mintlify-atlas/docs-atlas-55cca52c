@@ -1,0 +1,118 @@
+---
+title: "NASA WorldWind Java: 3D Geospatial SDK for Desktop Apps"
+sidebarTitle: "Introduction"
+description: "NASA WorldWind Java is an open-source Java SDK for building cross-platform 3D geospatial desktop applications with an interactive virtual globe powered by OpenGL."
+---
+
+NASA WorldWind Java (WWJ) is an open-source 3D virtual globe API for desktop Java, developed by NASA. It provides a geographic context with high-resolution terrain for visualizing geographic or geo-located information in both 3D and 2D. Built on OpenGL via the JOGL library, WorldWind Java enables developers to build rich, interactive geospatial desktop applications that run on Windows, macOS, and Linux — all from a single cross-platform Java codebase. The current stable release is **v2.2.1**, licensed under the [Apache License 2.0](http://www.apache.org/licenses/LICENSE-2.0).
+
+## Key Capabilities
+
+WorldWind Java ships with a comprehensive feature set covering everything from satellite imagery rendering to interactive shape picking.
+
+<CardGroup cols={2}>
+  <Card title="3D Interactive Globe" icon="earth-americas">
+    A fully interactive, OpenGL-accelerated virtual globe with smooth pan, zoom, tilt, and rotation. Supports both 3D perspective and 2D flat-map projections.
+  </Card>
+  <Card title="High-Resolution Terrain" icon="mountain">
+    Streaming terrain elevation data with adaptive tessellation. Developers can customize or replace the elevation model and surface geometry tessellator.
+  </Card>
+  <Card title="Satellite Imagery & WMS" icon="satellite">
+    Built-in support for OGC Web Map Service (WMS) layers, tiled imagery, and custom raster data sources. Compose multiple imagery layers with blending and opacity controls.
+  </Card>
+  <Card title="Geographic Shapes" icon="shapes">
+    A rich library of geographic shapes — polygons, polylines, paths, ellipses, cones, boxes, airspaces, and more — with full attribute styling and altitude modes.
+  </Card>
+  <Card title="KML / KMZ Support" icon="file-code">
+    Load and display KML and KMZ files including placemarks, overlays, ground overlays, screen overlays, and 3D models.
+  </Card>
+  <Card title="Symbology (MIL-STD-2525)" icon="flag">
+    Built-in support for MIL-STD-2525 tactical symbols and icon retrieval, enabling defense and situational-awareness applications.
+  </Card>
+  <Card title="Picking & Select Events" icon="cursor">
+    Full object picking pipeline — click, hover, drag, and box-select on any rendered shape or placemark. Register `SelectListener` callbacks on the `WorldWindow`.
+  </Card>
+  <Card title="Data Import (GDAL)" icon="database">
+    Optional GDAL integration via `gdal.jar` for importing a wide range of raster and vector geospatial data formats into the globe.
+  </Card>
+</CardGroup>
+
+## Architecture Overview
+
+WorldWind Java is structured around a small set of core interfaces and classes. Understanding these components helps you navigate the API and build applications effectively.
+
+| Component | Interface / Class | Role |
+|---|---|---|
+| **WorldWindow** | `gov.nasa.worldwind.WorldWindow` | The top-level interface implemented by all toolkit-specific rendering windows (e.g., `WorldWindowGLCanvas`). Acts as the entry point for attaching a `Model`, a `View`, and event listeners. |
+| **Model** | `gov.nasa.worldwind.Model` | Aggregates the `Globe` and the `LayerList`. Accessed via `WorldWindow.getModel()`. A default model is defined in `worldwind.xml`. |
+| **Globe** | `gov.nasa.worldwind.globes.Globe` | Represents the planetary body with its elevation model and surface geometry tessellator. Interchangeable — swap in a flat globe for 2D projection. |
+| **LayerList** | `gov.nasa.worldwind.layers.LayerList` | An ordered list of `Layer` objects drawn back-to-front. Built-in layers include imagery, compass, graticule, placenames, and view controls. |
+| **View** | `gov.nasa.worldwind.View` | Controls the camera: position, orientation, field of view, and navigation animations. The default implementation is `BasicOrbitView`. |
+| **SceneController** | `gov.nasa.worldwind.SceneController` | Orchestrates the rendering pipeline each frame: picks, pre-renders, renders, and post-renders the globe and all layers. |
+
+The typical object graph for a WorldWind application looks like this:
+
+```
+WorldWindowGLCanvas (WorldWindow)
+  └── BasicModel (Model)
+        ├── Earth (Globe)
+        │     └── EarthElevationModel
+        └── LayerList
+              ├── BMNGOneImage
+              ├── BMNGWMSLayer
+              ├── CompassLayer
+              ├── PlaceNameLayer
+              └── ... (your custom layers)
+```
+
+## Version & Requirements
+
+WorldWind Java v2.2.1 is the current production release. It is a maintenance release over v2.2.0, which modernized the SDK after a period of inactivity by upgrading to Java 11 and JOGL 2.4 and switching to the Apache 2.0 license.
+
+| Requirement | Value |
+|---|---|
+| **Version** | 2.2.1 |
+| **Java** | Java 11 or higher |
+| **OpenGL** | JOGL 2.4 (bundled) |
+| **License** | Apache License 2.0 |
+| **Source** | [GitHub — NASAWorldWind/WorldWindJava](https://github.com/NASAWorldWind/WorldWindJava) |
+
+### Third-Party Libraries
+
+WorldWind Java bundles the following open-source libraries:
+
+- **JOGL 2.4** — Java OpenGL bindings (BSD License)
+- **GlueGen** — Native binding glue code for JOGL (BSD License)
+- **GDAL** — Geospatial Data Abstraction Library (MIT License)
+- **Jackson Parser** — JSON processing (Apache 2.0)
+
+## Supported Platforms
+
+WorldWind Java runs on all major desktop operating systems. JOGL provides platform-native OpenGL rendering on each.
+
+| Platform | Architecture | Notes |
+|---|---|---|
+| **Windows** | x86-64 | Tested on Windows 10 and Windows 11 |
+| **macOS** | Universal (arm64 + x86-64) | Supports Apple Silicon via universal native binary |
+| **Linux** | x86-64 | Tested on Ubuntu and other common distributions |
+
+<Note>
+  WorldWind requires a **modern graphics card with an up-to-date driver**. Most display problems — including a black or blank globe — are caused by out-of-date graphics drivers. On Windows, visit your GPU manufacturer's website (NVIDIA, AMD/ATI, or Intel) and download the latest driver. On laptops, check the laptop manufacturer's support site. Linux users should ensure Mesa or the proprietary driver is current. The minimum requirement is **OpenGL 2.0** support.
+</Note>
+
+## Get Started
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Create your first 3D globe application in under 5 minutes. Covers project setup, the simplest possible example, and adding your first layer.
+  </Card>
+  <Card title="Installation" icon="box" href="/installation">
+    Full installation guide — JAR download, Maven local repo install, Gradle setup, and platform-specific native library configuration.
+  </Card>
+  <Card title="WorldWindow Concepts" icon="window" href="/concepts/worldwindow">
+    Deep dive into the `WorldWindow` interface: models, views, scene controllers, event listeners, and the rendering pipeline.
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/worldwind">
+    Full Javadoc-based API reference for all public classes and interfaces in the `gov.nasa.worldwind` package hierarchy.
+  </Card>
+</CardGroup>

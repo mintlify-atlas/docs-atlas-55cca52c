@@ -1,0 +1,311 @@
+---
+title: "Utility Classes: WWUtil, Logging, WWIO, PerformanceStatistic"
+sidebarTitle: "Utilities"
+description: "Reference for WorldWind Java utility classes: WWUtil for type conversion, WWIO for file and stream I/O, Logging for SDK logging, and PerformanceStatistic for profiling."
+---
+
+The `gov.nasa.worldwind.util` package contains cross-cutting utilities used throughout the SDK. It provides type-conversion helpers (`WWUtil`), file and stream I/O utilities (`WWIO`), the SDK-wide logging facade (`Logging`), performance profiling constants (`PerformanceStatistic`), network status monitoring (`NetworkStatus`), interactive dragging support (`BasicDragger`), and a Swing status bar component (`StatusBar`).
+
+---
+
+## `WWUtil`
+
+`WWUtil` is a static utility class for safe type conversion, string testing, and miscellaneous helpers.
+
+```java title="WWUtil — type conversion methods"
+import gov.nasa.worldwind.util.WWUtil;
+
+// Null-safe conversions — return null instead of throwing on bad input
+Integer i = WWUtil.makeInteger("42");          // → 42
+Integer bad = WWUtil.makeInteger("not-a-number"); // → null
+
+Long    l = WWUtil.makeLong("1000000");
+Double  d = WWUtil.makeDouble("3.14159");
+
+// Locale-aware double parsing (uses the JVM's default locale)
+Double locale = WWUtil.makeDoubleForLocale("3,14");
+
+// Original convertStringToInteger throws IllegalArgumentException on null input
+Integer safe = WWUtil.convertStringToInteger("100");
+
+// Null / empty checks
+boolean empty1 = WWUtil.isEmpty((String) null);  // true
+boolean empty2 = WWUtil.isEmpty("");             // true
+boolean empty3 = WWUtil.isEmpty("  ");           // false — only checks null/empty
+boolean emptyList = WWUtil.isEmpty(Collections.emptyList()); // true
+
+// Copy selected AVList keys from one list to another
+WWUtil.copyValues(source, dest, new String[] {
+    AVKey.DATASET_NAME, AVKey.FORMAT_SUFFIX
+});
+```
+
+| Method | Return | Description |
+|---|---|---|
+| `convertStringToInteger(String)` | `Integer` | Throws on null; returns null for format errors. |
+| `makeInteger(String)` | `Integer` | Null-safe; returns null for any invalid input. |
+| `makeLong(String)` | `Long` | Null-safe long conversion. |
+| `makeDouble(String)` | `Double` | Null-safe double conversion. |
+| `makeDoubleForLocale(String)` | `Double` | Uses default locale decimal separator. |
+| `isEmpty(Object)` | `boolean` | True if argument is null. |
+| `isEmpty(List<?>)` | `boolean` | True if list is null or `isEmpty()`. |
+| `copyValues(AVList, AVList, String[])` | `void` | Copies named keys between AVLists. |
+
+---
+
+## `WWIO`
+
+`WWIO` provides static methods for reading and writing files, streams, URLs, and buffers. It also handles cache file naming.
+
+```java title="WWIO — file and stream I/O"
+import gov.nasa.worldwind.util.WWIO;
+
+// Read a text file as a String
+String content = WWIO.readTextFile(new File("config.xml"));
+
+// Read an InputStream as a String with explicit encoding
+String xml = WWIO.readTextStream(inputStream, "UTF-8");
+
+// Check whether a cached URL resource is stale
+boolean stale = WWIO.isFileOutOfDate(
+    new URL("file:///cache/imagery/tile.dds"),
+    System.currentTimeMillis() - 7 * 24 * 3600 * 1000L); // 7 days
+
+// Strip illegal characters from file name
+String safe = WWIO.replaceIllegalFileNameCharacters("my:map/image?.tif");
+// → "my_map_image_.tif"
+
+// Get file extension (includes the dot)
+String ext = WWIO.getFileSuffix("tile.png");   // → ".png"
+String none = WWIO.getFileSuffix("noext");     // → null
+
+// Construct a URL from a path or URL string
+URL url = WWIO.makeURL("https://example.com/data");
+URL file = WWIO.makeURL("/home/user/data.tif"); // wraps as file:// URL
+
+// Append URL path components
+String joined = WWIO.appendPathPart("https://example.com/wms",
+    "?SERVICE=WMS&REQUEST=GetCapabilities");
+```
+
+| Method | Description |
+|---|---|
+| `readTextFile(File)` | Reads entire file as UTF-8 `String`. |
+| `readTextStream(InputStream, String)` | Reads stream with given charset name. |
+| `isFileOutOfDate(URL, long)` | Returns true if the file's last-modified timestamp is before `expiryTime`. |
+| `replaceIllegalFileNameCharacters(String)` | Replaces `\\ / : * ? " < > \|` with underscores. |
+| `getFileSuffix(String)` | Returns the `.ext` portion, or null if none. |
+| `makeURL(String)` | Converts a file path or URL string to `java.net.URL`. |
+| `makeURL(Object, String)` | Same, with fallback default protocol (e.g. `"file"`). |
+| `appendPathPart(String, String)` | Joins two path segments handling trailing/leading slashes. |
+
+---
+
+## `Logging`
+
+`Logging` is the single point of access to WorldWind's `java.util.logging.Logger`. The default logger name is `gov.nasa.worldwind`, configurable via `Configuration`.
+
+```java title="Logging — accessing the logger"
+import gov.nasa.worldwind.util.Logging;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+
+// Get the WorldWind logger
+Logger logger = Logging.logger();
+
+// Standard log levels
+logger.info("Layer loaded successfully.");
+logger.warning("Tile cache is nearing capacity.");
+logger.severe("Failed to connect to elevation service.");
+logger.log(Level.FINE, "Tile rendered at level {0}", tileLevel);
+
+// Retrieve a localised message from the MessageStrings bundle
+String msg = Logging.getMessage("nullValue.PositionIsNull");
+logger.severe(msg);
+```
+
+### Configuring Log Output
+
+WorldWind logs are controlled by standard `java.util.logging` configuration. To suppress verbose tile-loading messages, add a `logging.properties` file to the classpath:
+
+```properties title="logging.properties — suppress WorldWind output"
+# Set global log level
+.level = WARNING
+
+# Silence WorldWind entirely
+gov.nasa.worldwind.level = OFF
+
+# Or set a fine-grained level for one subsystem
+gov.nasa.worldwind.layers.level = SEVERE
+```
+
+Apply via JVM argument:
+```
+-Djava.util.logging.config.file=logging.properties
+```
+
+<Tip>
+  The maximum number of times a repeated message is logged before being suppressed is controlled by `AVKey.MAX_MESSAGE_REPEAT` (default 10). Set this in `worldwind.xml` or via `Configuration.setValue()`.
+</Tip>
+
+---
+
+## `PerformanceStatistic`
+
+`PerformanceStatistic` defines string keys for named performance counters collected each frame. Enable collection by passing a set of keys to `WorldWindow.setPerformanceStatisticKeys()`.
+
+```java title="PerformanceStatistic — key constants"
+public class PerformanceStatistic {
+    public static final String ALL            = "gov.nasa.worldwind.perfstat.All";
+    public static final String FRAME_RATE     = "gov.nasa.worldwind.perfstat.FrameRate";
+    public static final String FRAME_TIME     = "gov.nasa.worldwind.perfstat.FrameTime";
+    public static final String IMAGE_TILE_COUNT   = "gov.nasa.worldwind.perfstat.ImageTileCount";
+    public static final String TERRAIN_TILE_COUNT = "gov.nasa.worldwind.perfstat.TerrainTileCount";
+    public static final String PICK_TIME      = "gov.nasa.worldwind.perfstat.PickTime";
+    public static final String MEMORY_CACHE   = "gov.nasa.worldwind.perfstat.MemoryCache";
+    public static final String TEXTURE_CACHE  = "gov.nasa.worldwind.perfstat.TextureCache";
+    public static final String JVM_HEAP       = "gov.nasa.worldwind.perfstat.JvmHeap";
+    public static final String JVM_HEAP_USED  = "gov.nasa.worldwind.perfstat.JvmHeapUsed";
+}
+```
+
+```java title="PerformanceStatistic — enabling and reading statistics"
+// Enable all statistics
+wwd.setPerformanceStatisticKeys(PerformanceStatistic.ALL_STATISTICS_SET);
+
+// Enable a specific subset
+Set<String> keys = new HashSet<>();
+keys.add(PerformanceStatistic.FRAME_RATE);
+keys.add(PerformanceStatistic.TERRAIN_TILE_COUNT);
+wwd.setPerformanceStatisticKeys(keys);
+
+// Read during a rendering listener callback
+wwd.addRenderingListener(event -> {
+    if (event.getStage().equals(RenderingEvent.BEFORE_BUFFER_SWAP)) {
+        Map<String, PerformanceStatistic> stats =
+            wwd.getSceneController().getPerformanceStatistics();
+
+        PerformanceStatistic fps = stats.get(PerformanceStatistic.FRAME_RATE);
+        if (fps != null) {
+            System.out.println("FPS: " + fps.getValue());
+        }
+    }
+});
+```
+
+| Constant | Description |
+|---|---|
+| `ALL` | Enables all available statistics. |
+| `FRAME_RATE` | Frames per second (rolling average). |
+| `FRAME_TIME` | Milliseconds per frame. |
+| `IMAGE_TILE_COUNT` | Number of imagery tiles rendered this frame. |
+| `TERRAIN_TILE_COUNT` | Number of terrain tiles rendered this frame. |
+| `PICK_TIME` | Milliseconds spent in the pick pass. |
+| `MEMORY_CACHE` | Memory cache usage in bytes. |
+| `TEXTURE_CACHE` | Texture cache usage in bytes. |
+| `JVM_HEAP` | Total JVM heap size in bytes. |
+| `JVM_HEAP_USED` | Used JVM heap in bytes. |
+
+---
+
+## `NetworkStatus`
+
+`NetworkStatus` monitors the availability of network hosts and provides offline-mode control.
+
+```java title="NetworkStatus — checking and controlling network access"
+NetworkStatus ns = WorldWind.getNetworkStatus();
+
+// Test overall network availability
+boolean offline = ns.isNetworkUnavailable();
+boolean offlineTimeout = ns.isNetworkUnavailable(5000); // with 5-second check interval
+
+// Test a specific host
+boolean hostDown = ns.isHostUnavailable(
+    new URL("https://elevation.example.com"));
+
+// Force fully offline mode (no network requests will be made)
+ns.setOfflineMode(true);
+
+// Check whether offline mode is active
+boolean isOffline = ns.isOfflineMode();
+```
+
+<Warning>
+  When `setOfflineMode(true)` is called, all `TiledImageLayer` and elevation model downloads are suppressed globally, even for layers that have `setNetworkRetrievalEnabled(true)`. Only locally cached tiles are displayed.
+</Warning>
+
+---
+
+## `BasicDragger`
+
+`BasicDragger` is a `SelectListener` that intercepts `DragSelectEvent`s and translates them into position updates on picked objects that implement `Draggable`, `Movable`, or `Movable2`.
+
+```java title="BasicDragger — enabling drag interactions"
+BasicDragger dragger = new BasicDragger(wwd);
+
+// Register as a select listener on the WorldWindow
+wwd.addSelectListener(dragger);
+
+// Check current drag state
+boolean isDragging = dragger.isDragging();
+```
+
+Make a custom `Renderable` draggable by implementing the `Draggable` interface:
+
+```java title="Draggable interface — minimum implementation"
+public class DraggableMarker extends WWObjectImpl implements Renderable, Draggable {
+
+    @Override
+    public boolean isDraggingArmed(DragSelectEvent event) {
+        return true; // allow dragging from any drag event
+    }
+
+    @Override
+    public void drag(DragContext dc) {
+        // dc.getPlaneOffset() gives the delta in model coordinates
+        // Update internal position accordingly
+    }
+}
+```
+
+---
+
+## `StatusBar`
+
+`StatusBar` is a Swing `JPanel` that displays the cursor's geographic position (latitude, longitude, altitude) and terrain elevation in real time.
+
+```java title="StatusBar — adding to a Swing application"
+StatusBar statusBar = new StatusBar();
+statusBar.setEventSource(wwd); // subscribes to PositionEvents
+
+// Units: UNIT_METRIC (default) or UNIT_IMPERIAL
+statusBar.setElevationUnit(StatusBar.UNIT_METRIC);
+
+// Angle format: Angle.ANGLE_FORMAT_DD or Angle.ANGLE_FORMAT_DMS
+statusBar.setAngleFormat(Angle.ANGLE_FORMAT_DMS);
+
+// Add to the bottom of the application panel
+appPanel.add(statusBar, BorderLayout.SOUTH);
+```
+
+---
+
+## Logging Configuration Example
+
+```java title="Configuring SDK logging programmatically"
+import java.util.logging.*;
+
+// Redirect WorldWind log output to a file
+Logger wwLogger = Logging.logger();
+try {
+    FileHandler fh = new FileHandler("worldwind.log", true);
+    fh.setFormatter(new SimpleFormatter());
+    fh.setLevel(Level.ALL);
+    wwLogger.addHandler(fh);
+    wwLogger.setLevel(Level.ALL);
+    // Prevent propagation to the root logger (console)
+    wwLogger.setUseParentHandlers(false);
+} catch (IOException e) {
+    e.printStackTrace();
+}
+```

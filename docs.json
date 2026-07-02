@@ -1,72 +1,118 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mintlify Starter Kit",
+  "name": "NASA WorldWind Java",
+  "theme": "maple",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#113f95",
+    "light": "#7d3c5c",
+    "dark": "#e0706b"
   },
-  "favicon": "/favicon.svg",
-  "navigation": {
-    "pages": [
-      {
-        "group": "Getting Started",
-        "pages": [
-          "index",
-          "quickstart"
-        ]
-      }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
+  "favicon": "https://media.brand.dev/1b581027-c8d7-4148-9fae-bdcad37938d1.png",
   "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
+    "light": "https://media.brand.dev/7ea7ab81-a70a-43a9-8366-bafc011e4df5.svg",
+    "dark": "https://media.brand.dev/7ea7ab81-a70a-43a9-8366-bafc011e4df5.svg"
   },
   "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
     "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://app.mintlify.com"
+      "type": "github",
+      "href": "https://github.com/nasaworldwind/worldwindjava"
     }
-  },
-  "contextual": {
-    "options": [
-      "copy",
-      "view",
-      "chatgpt",
-      "claude",
-      "perplexity",
-      "mcp",
-      "cursor",
-      "vscode"
-    ]
   },
   "footer": {
     "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
+      "github": "https://github.com/nasaworldwind/worldwindjava"
     }
+  },
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/worldwindow",
+              "concepts/model-view",
+              "concepts/layers",
+              "concepts/globe-terrain"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/rendering-shapes",
+              "guides/imagery-elevation",
+              "guides/kml-collada",
+              "guides/wms-ogc",
+              "guides/symbology",
+              "guides/data-import",
+              "guides/camera-navigation",
+              "guides/events-picking"
+            ]
+          },
+          {
+            "group": "Configuration & Deployment",
+            "pages": [
+              "configuration/configuration-api",
+              "configuration/caching",
+              "configuration/jogl-deployment"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Core",
+            "pages": [
+              "api/worldwind",
+              "api/worldwindow",
+              "api/model-scenecontroller"
+            ]
+          },
+          {
+            "group": "Geometry & Globe",
+            "pages": [
+              "api/geom",
+              "api/globes",
+              "api/terrain"
+            ]
+          },
+          {
+            "group": "Layers & Rendering",
+            "pages": [
+              "api/layers",
+              "api/render",
+              "api/airspaces"
+            ]
+          },
+          {
+            "group": "Data & Formats",
+            "pages": [
+              "api/data-raster",
+              "api/formats",
+              "api/ogc"
+            ]
+          },
+          {
+            "group": "Symbology & Utilities",
+            "pages": [
+              "api/symbology",
+              "api/util",
+              "api/avlist"
+            ]
+          }
+        ]
+      }
+    ]
   }
 }

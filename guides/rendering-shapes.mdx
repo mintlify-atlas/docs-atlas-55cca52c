@@ -1,0 +1,423 @@
+---
+title: "Rendering Geographic Shapes on the WorldWind Globe"
+sidebarTitle: "Shapes"
+description: "Add paths, polygons, surface shapes, extruded buildings, and point placemarks to a WorldWind Java globe using RenderableLayer and ShapeAttributes."
+---
+
+NASA WorldWind Java provides a rich, layered shape system for placing geographic geometry on the globe. Every visual element — from a simple icon to an extruded building footprint — implements the `Renderable` interface and is managed through a `RenderableLayer`. Shapes fall into two broad categories: **surface shapes** that drape conformally on the terrain, and **3D shapes** that occupy volume in world-space. Both categories share a common `ShapeAttributes` styling model and integrate cleanly with WorldWind's camera, picking, and selection systems.
+
+## Shape Hierarchy
+
+All renderable geometry descends from `Renderable`, the root interface that defines a single `render(DrawContext)` contract. Concrete geometric shapes extend `AbstractShape`, which provides the altitude-mode machinery, highlight state, and attributes bundle common to all 3D shapes:
+
+```
+Renderable
+  └─ AbstractShape
+        ├─ Path
+        ├─ ExtrudedPolygon
+        ├─ Box / Cone / Cylinder / Ellipsoid / Wedge  (RigidShape subclasses)
+        └─ SurfaceShape  (AbstractSurfaceShape subclasses)
+              ├─ SurfacePolygon
+              ├─ SurfacePolyline
+              ├─ SurfaceCircle
+              ├─ SurfaceEllipse
+              ├─ SurfaceSquare
+              ├─ SurfaceQuad
+              └─ SurfaceSector
+```
+
+**Surface shapes** (`SurfaceShape` and its subclasses) are tessellated and rendered directly on the terrain mesh — they have no altitude component and always follow the ground. **3D shapes** respect WorldWind altitude modes (`ABSOLUTE`, `RELATIVE_TO_GROUND`, `CLAMP_TO_GROUND`) and can be extruded or positioned at any height above the ellipsoid.
+
+`PointPlacemark` is a special case: it implements `Renderable` directly (not through `AbstractShape`) and represents a screen-space icon pinned to a geographic position.
+
+## ShapeAttributes
+
+Every `AbstractShape` and `SurfaceShape` accepts a `ShapeAttributes` bundle that controls visual appearance. `BasicShapeAttributes` is the standard implementation. Key properties:
+
+| Property | Setter | Description |
+|---|---|---|
+| Draw interior | `setDrawInterior(boolean)` | Fill the shape's interior |
+| Draw outline | `setDrawOutline(boolean)` | Draw the shape's border |
+| Interior material | `setInteriorMaterial(Material)` | Color/texture of the fill |
+| Outline material | `setOutlineMaterial(Material)` | Color of the border |
+| Interior opacity | `setInteriorOpacity(double)` | 0.0 (transparent) – 1.0 (opaque) |
+| Outline opacity | `setOutlineOpacity(double)` | 0.0 – 1.0 |
+| Outline width | `setOutlineWidth(double)` | Pixels |
+| Stipple factor | `setOutlineStippleFactor(int)` | Dashed-line repeat factor |
+| Stipple pattern | `setOutlineStipplePattern(short)` | 16-bit dash bitmask |
+| Lighting | `setEnableLighting(boolean)` | OpenGL lighting for 3D shapes |
+
+```java CreateShapeAttributes.java
+import gov.nasa.worldwind.render.BasicShapeAttributes;
+import gov.nasa.worldwind.render.Material;
+
+// Normal attributes
+BasicShapeAttributes attrs = new BasicShapeAttributes();
+attrs.setDrawInterior(true);
+attrs.setDrawOutline(true);
+attrs.setInteriorMaterial(Material.CYAN);
+attrs.setInteriorOpacity(0.6);
+attrs.setOutlineMaterial(Material.WHITE);
+attrs.setOutlineOpacity(0.9);
+attrs.setOutlineWidth(2.0);
+
+// Highlight attributes (copy, then modify)
+BasicShapeAttributes highlight = new BasicShapeAttributes(attrs);
+highlight.setOutlineMaterial(Material.YELLOW);
+highlight.setOutlineOpacity(1.0);
+```
+
+<Note>
+A shape can carry two attribute bundles: normal attributes set via `setAttributes(ShapeAttributes)` and highlight attributes set via `setHighlightAttributes(ShapeAttributes)`. Call `setHighlighted(true)` on the shape to switch to the highlight bundle — useful for hover or selection feedback.
+</Note>
+
+## Path
+
+`Path` draws a line or curve through an ordered list of `Position` objects. It supports terrain-following, extrusion to the ground to form a curtain, and per-position colors via the `PositionColors` interface.
+
+```java CreatePath.java
+import gov.nasa.worldwind.WorldWind;
+import gov.nasa.worldwind.avlist.AVKey;
+import gov.nasa.worldwind.geom.Position;
+import gov.nasa.worldwind.render.BasicShapeAttributes;
+import gov.nasa.worldwind.render.Material;
+import gov.nasa.worldwind.render.Path;
+
+import java.util.ArrayList;
+import java.util.List;
+
+// Build the position list
+List<Position> positions = new ArrayList<>();
+positions.add(Position.fromDegrees(37.8484, -119.9754, 10000));
+positions.add(Position.fromDegrees(39.3540, -110.1526, 10000));
+positions.add(Position.fromDegrees(38.3540, -100.1526, 10000));
+
+// Create the path
+Path path = new Path(positions);
+
+// Path type: AVKey.GREAT_CIRCLE, AVKey.LINEAR, or AVKey.RHUMB_LINE
+path.setPathType(AVKey.GREAT_CIRCLE);
+
+// Altitude mode
+path.setAltitudeMode(WorldWind.ABSOLUTE);
+// WorldWind.RELATIVE_TO_GROUND — altitude added to terrain elevation
+// WorldWind.CLAMP_TO_GROUND    — altitude ignored; path follows terrain
+
+// Terrain following (adapts tessellation density to view distance)
+path.setFollowTerrain(false);
+path.setNumSubsegments(10); // intermediate segments when not following terrain
+
+// Show a dot at each specified position
+path.setShowPositions(true);
+path.setShowPositionsScale(5.0);
+
+// Style
+BasicShapeAttributes attrs = new BasicShapeAttributes();
+attrs.setOutlineMaterial(new Material(java.awt.Color.YELLOW));
+attrs.setOutlineWidth(2.0);
+path.setAttributes(attrs);
+```
+
+**Path types** control the interpolation curve between positions:
+
+- `AVKey.GREAT_CIRCLE` — follows the shortest path on the globe surface (default)
+- `AVKey.RHUMB_LINE` — constant compass bearing between points
+- `AVKey.LINEAR` — straight line in Cartesian space (appropriate for short segments)
+
+**Altitude modes** (from `WorldWind` constants):
+
+- `WorldWind.ABSOLUTE` — elevation above the WGS-84 ellipsoid
+- `WorldWind.RELATIVE_TO_GROUND` — elevation above the terrain
+- `WorldWind.CLAMP_TO_GROUND` — altitude values ignored; path hugs terrain
+
+## Surface Shapes
+
+Surface shapes drape on the terrain and are defined using `LatLon` (latitude/longitude only, no altitude). WorldWind tessellates them at render time to follow the globe's curvature and elevation model.
+
+Available surface shape types:
+
+| Class | Description |
+|---|---|
+| `SurfacePolygon` | Arbitrary closed polygon defined by a list of `LatLon` vertices |
+| `SurfacePolyline` | Open polyline defined by a list of `LatLon` vertices |
+| `SurfaceCircle` | Circle defined by a center `LatLon` and radius in meters |
+| `SurfaceEllipse` | Ellipse defined by center, major/minor radii, and heading angle |
+| `SurfaceSquare` | Square defined by center `LatLon` and side length in meters |
+| `SurfaceQuad` | Rectangle defined by center, width, height, and heading |
+| `SurfaceSector` | Filled `Sector` (lat/lon bounding box) |
+
+```java CreateSurfacePolygon.java
+import gov.nasa.worldwind.geom.LatLon;
+import gov.nasa.worldwind.render.BasicShapeAttributes;
+import gov.nasa.worldwind.render.Material;
+import gov.nasa.worldwind.render.SurfaceCircle;
+import gov.nasa.worldwind.render.SurfacePolygon;
+
+import java.util.ArrayList;
+import java.util.List;
+
+// Polygon from a vertex list
+List<LatLon> vertices = new ArrayList<>();
+vertices.add(LatLon.fromDegrees(38.0, -105.0));
+vertices.add(LatLon.fromDegrees(39.0, -104.0));
+vertices.add(LatLon.fromDegrees(39.0, -105.0));
+vertices.add(LatLon.fromDegrees(38.0, -105.0)); // close the ring
+
+SurfacePolygon polygon = new SurfacePolygon(vertices);
+
+BasicShapeAttributes polyAttrs = new BasicShapeAttributes();
+polyAttrs.setDrawInterior(true);
+polyAttrs.setInteriorMaterial(Material.GREEN);
+polyAttrs.setInteriorOpacity(0.5);
+polyAttrs.setDrawOutline(true);
+polyAttrs.setOutlineMaterial(Material.WHITE);
+polyAttrs.setOutlineWidth(1.5);
+polygon.setAttributes(polyAttrs);
+
+// Circle — center position and radius in meters
+LatLon center = LatLon.fromDegrees(38.0, -105.0);
+SurfaceCircle circle = new SurfaceCircle(center, 100_000); // 100 km radius
+circle.setAttributes(polyAttrs);
+```
+
+<Note>
+`SurfaceShape` instances are automatically re-tessellated when the view changes or the elevation model updates, ensuring they always conform to the current terrain without any manual refresh.
+</Note>
+
+## Extruded Polygon
+
+`ExtrudedPolygon` creates a building-like shape by extruding a polygon footprint to a specified height. It has **separate attribute bundles** for its cap (top face) and sides.
+
+```java CreateExtrudedPolygon.java
+import gov.nasa.worldwind.WorldWind;
+import gov.nasa.worldwind.geom.Position;
+import gov.nasa.worldwind.render.BasicShapeAttributes;
+import gov.nasa.worldwind.render.ExtrudedPolygon;
+import gov.nasa.worldwind.render.Material;
+
+import java.util.ArrayList;
+import java.util.List;
+
+// Side attributes
+BasicShapeAttributes sideAttrs = new BasicShapeAttributes();
+sideAttrs.setInteriorMaterial(Material.MAGENTA);
+sideAttrs.setInteriorOpacity(0.5);
+sideAttrs.setOutlineMaterial(Material.GREEN);
+sideAttrs.setOutlineWidth(2.0);
+sideAttrs.setDrawOutline(true);
+sideAttrs.setDrawInterior(true);
+sideAttrs.setEnableLighting(true);
+
+// Highlight side attributes
+BasicShapeAttributes sideHighlight = new BasicShapeAttributes(sideAttrs);
+sideHighlight.setOutlineMaterial(Material.WHITE);
+sideHighlight.setOutlineOpacity(1.0);
+
+// Cap (roof) attributes
+BasicShapeAttributes capAttrs = new BasicShapeAttributes(sideAttrs);
+capAttrs.setInteriorMaterial(Material.YELLOW);
+capAttrs.setInteriorOpacity(0.8);
+capAttrs.setEnableLighting(true);
+
+// Build the footprint positions (altitude = top of extrusion)
+List<Position> footprint = new ArrayList<>();
+footprint.add(Position.fromDegrees(28.0, -106.0, 30_000));
+footprint.add(Position.fromDegrees(35.0, -104.0, 30_000));
+footprint.add(Position.fromDegrees(35.0, -107.0, 90_000));
+footprint.add(Position.fromDegrees(28.0, -107.0, 90_000));
+footprint.add(Position.fromDegrees(28.0, -106.0, 30_000)); // close ring
+
+ExtrudedPolygon building = new ExtrudedPolygon(footprint);
+building.setAltitudeMode(WorldWind.RELATIVE_TO_GROUND);
+building.setSideAttributes(sideAttrs);
+building.setSideHighlightAttributes(sideHighlight);
+building.setCapAttributes(capAttrs);
+
+// Optional: add an inner boundary (hole/courtyard)
+List<Position> inner = new ArrayList<>();
+inner.add(Position.fromDegrees(29.0, -106.4, 40_000));
+inner.add(Position.fromDegrees(30.0, -106.4, 40_000));
+inner.add(Position.fromDegrees(29.0, -106.8, 70_000));
+inner.add(Position.fromDegrees(29.0, -106.4, 40_000));
+building.addInnerBoundary(inner);
+```
+
+## PointPlacemark
+
+`PointPlacemark` pins a screen-space icon to a geographic `Position`. It supports a connecting leader line from the icon to the terrain point, label text, and level-of-detail selection.
+
+```java CreatePointPlacemark.java
+import gov.nasa.worldwind.geom.Position;
+import gov.nasa.worldwind.render.Offset;
+import gov.nasa.worldwind.render.PointPlacemark;
+import gov.nasa.worldwind.render.PointPlacemarkAttributes;
+
+// Create the placemark at a geographic position
+Position pos = Position.fromDegrees(37.8749, -122.4294, 0);
+PointPlacemark placemark = new PointPlacemark(pos);
+placemark.setLabelText("San Francisco");
+placemark.setAltitudeMode(gov.nasa.worldwind.WorldWind.CLAMP_TO_GROUND);
+
+// Configure visual attributes
+PointPlacemarkAttributes pAttrs = new PointPlacemarkAttributes();
+pAttrs.setImageAddress("images/pushpin/plain-red.png"); // classpath or URL
+pAttrs.setScale(0.6);                                   // image scale factor
+pAttrs.setImageOffset(new Offset(0.5, 0.0,             // anchor: bottom-center
+    gov.nasa.worldwind.avlist.AVKey.FRACTION,
+    gov.nasa.worldwind.avlist.AVKey.FRACTION));
+
+// Label styling
+pAttrs.setLabelMaterial(gov.nasa.worldwind.render.Material.WHITE);
+
+placemark.setAttributes(pAttrs);
+
+// Highlight attributes shown when the placemark is selected
+PointPlacemarkAttributes highlightAttrs = new PointPlacemarkAttributes(pAttrs);
+highlightAttrs.setScale(0.8);
+placemark.setHighlightAttributes(highlightAttrs);
+```
+
+## 3D Shapes
+
+WorldWind provides five rigid 3D volumetric shape types, all extending `RigidShape`. They are constructed from a center `Position` and axis-radii:
+
+| Class | Constructor hint |
+|---|---|
+| `Box` | `new Box(centerPosition, northSouthRadius, verticalRadius, eastWestRadius)` |
+| `Cone` | `new Cone(centerPosition, northSouthRadius, verticalRadius, eastWestRadius)` |
+| `Cylinder` | `new Cylinder(centerPosition, northSouthRadius, verticalRadius, eastWestRadius)` |
+| `Ellipsoid` | `new Ellipsoid(centerPosition, northSouthRadius, verticalRadius, eastWestRadius)` |
+| `Wedge` | `new Wedge(centerPosition, northSouthRadius, verticalRadius, eastWestRadius, wedgeAngle)` |
+
+```java Create3DShapes.java
+import gov.nasa.worldwind.WorldWind;
+import gov.nasa.worldwind.geom.Angle;
+import gov.nasa.worldwind.geom.Position;
+import gov.nasa.worldwind.render.Box;
+import gov.nasa.worldwind.render.Cylinder;
+import gov.nasa.worldwind.render.BasicShapeAttributes;
+import gov.nasa.worldwind.render.Material;
+
+// A box centered over Denver at 10 km altitude
+Position denver = Position.fromDegrees(39.73, -104.99, 10_000);
+Box box = new Box(denver,
+    50_000,  // north-south radius in meters
+    20_000,  // vertical radius
+    50_000); // east-west radius
+box.setAltitudeMode(WorldWind.ABSOLUTE);
+
+BasicShapeAttributes boxAttrs = new BasicShapeAttributes();
+boxAttrs.setInteriorMaterial(Material.BLUE);
+boxAttrs.setInteriorOpacity(0.7);
+boxAttrs.setEnableLighting(true);
+box.setAttributes(boxAttrs);
+
+// A cylinder
+Cylinder cylinder = new Cylinder(denver, 30_000, 15_000, 30_000);
+cylinder.setAltitudeMode(WorldWind.ABSOLUTE);
+cylinder.setAttributes(boxAttrs);
+```
+
+## Adding Shapes to the Globe
+
+All shapes are added to a `RenderableLayer`, which is then inserted into the `WorldWindow`'s layer list.
+
+<Tabs>
+  <Tab title="Path">
+    ```java AddPathToGlobe.java
+    import gov.nasa.worldwind.WorldWind;
+    import gov.nasa.worldwind.avlist.AVKey;
+    import gov.nasa.worldwind.geom.Position;
+    import gov.nasa.worldwind.layers.RenderableLayer;
+    import gov.nasa.worldwind.render.BasicShapeAttributes;
+    import gov.nasa.worldwind.render.Material;
+    import gov.nasa.worldwind.render.Path;
+
+    import java.util.Arrays;
+
+    // Create a path
+    Path path = new Path(Arrays.asList(
+        Position.fromDegrees(0,   -150, 8_000),
+        Position.fromDegrees(25,   -75, 8_000),
+        Position.fromDegrees(50,     0, 8_000)
+    ));
+    path.setPathType(AVKey.GREAT_CIRCLE);
+    path.setAltitudeMode(WorldWind.ABSOLUTE);
+
+    BasicShapeAttributes attrs = new BasicShapeAttributes();
+    attrs.setOutlineMaterial(Material.RED);
+    attrs.setOutlineWidth(3.0);
+    path.setAttributes(attrs);
+
+    // Add to a layer and register with the WorldWindow
+    RenderableLayer layer = new RenderableLayer();
+    layer.setName("My Paths");
+    layer.addRenderable(path);
+
+    // wwd is your WorldWindow instance
+    wwd.getModel().getLayers().add(layer);
+    ```
+  </Tab>
+  <Tab title="SurfacePolygon">
+    ```java AddSurfacePolygonToGlobe.java
+    import gov.nasa.worldwind.geom.LatLon;
+    import gov.nasa.worldwind.layers.RenderableLayer;
+    import gov.nasa.worldwind.render.BasicShapeAttributes;
+    import gov.nasa.worldwind.render.Material;
+    import gov.nasa.worldwind.render.SurfacePolygon;
+
+    import java.util.Arrays;
+
+    SurfacePolygon polygon = new SurfacePolygon(Arrays.asList(
+        LatLon.fromDegrees(38.0, -105.0),
+        LatLon.fromDegrees(39.0, -104.0),
+        LatLon.fromDegrees(39.0, -105.0),
+        LatLon.fromDegrees(38.0, -105.0)
+    ));
+
+    BasicShapeAttributes attrs = new BasicShapeAttributes();
+    attrs.setDrawInterior(true);
+    attrs.setInteriorMaterial(Material.GREEN);
+    attrs.setInteriorOpacity(0.4);
+    attrs.setDrawOutline(true);
+    attrs.setOutlineMaterial(Material.WHITE);
+    attrs.setOutlineWidth(1.5);
+    polygon.setAttributes(attrs);
+
+    RenderableLayer layer = new RenderableLayer();
+    layer.setName("My Polygons");
+    layer.addRenderable(polygon);
+
+    wwd.getModel().getLayers().add(layer);
+    ```
+  </Tab>
+  <Tab title="PointPlacemark">
+    ```java AddPlacemarkToGlobe.java
+    import gov.nasa.worldwind.WorldWind;
+    import gov.nasa.worldwind.geom.Position;
+    import gov.nasa.worldwind.layers.RenderableLayer;
+    import gov.nasa.worldwind.render.PointPlacemark;
+    import gov.nasa.worldwind.render.PointPlacemarkAttributes;
+
+    PointPlacemark placemark = new PointPlacemark(
+        Position.fromDegrees(40.7128, -74.0060, 0));
+    placemark.setLabelText("New York City");
+    placemark.setAltitudeMode(WorldWind.CLAMP_TO_GROUND);
+
+    PointPlacemarkAttributes attrs = new PointPlacemarkAttributes();
+    attrs.setImageAddress("images/pushpin/plain-yellow.png");
+    attrs.setScale(0.75);
+    placemark.setAttributes(attrs);
+
+    RenderableLayer layer = new RenderableLayer();
+    layer.setName("My Placemarks");
+    layer.addRenderable(placemark);
+
+    wwd.getModel().getLayers().add(layer);
+    ```
+  </Tab>
+</Tabs>
+
+<Tip>
+Use `ApplicationTemplate.insertBeforePlacenames(wwd, layer)` (from the examples utility class) to insert your layer just below WorldWind's default placename labels, ensuring your shapes are visible beneath the text overlays.
+</Tip>

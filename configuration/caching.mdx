@@ -1,0 +1,290 @@
+---
+title: "Caching Architecture in NASA WorldWind Java"
+sidebarTitle: "Caching"
+description: "WorldWind Java uses a three-tier caching system: a disk-based file store for imagery and elevation tiles, memory caches for parsed objects, and a GPU resource cache for textures."
+---
+
+WorldWind Java manages data at three distinct levels of storage. The **file store** (`FileStore` / `BasicDataFileStore`) acts as a persistent, disk-backed cache for remotely retrieved tiles — satellite imagery, elevation data, KML, and COLLADA models. Above that, a set of **memory caches** (`MemoryCache` / `BasicMemoryCacheSet`) hold parsed geometry, tessellation results, and per-layer objects in heap memory so the application avoids re-parsing files on every frame. Finally, the **GPU resource cache** (`GpuResourceCache` / `BasicGpuResourceCache`) tracks textures, vertex buffer objects (VBOs), and display lists that have been uploaded to graphics memory. A fourth, lightweight **session cache** (`SessionCache` / `BasicSessionCache`) provides a general-purpose in-memory key-value store for transient per-session data. All four tiers are accessible through static methods on `WorldWind` or through the active `WorldWindow`, and their capacities are controlled via `Configuration.setValue()` with the appropriate `AVKey` constants.
+
+## File Store
+
+### Interface and default implementation
+
+`gov.nasa.worldwind.cache.FileStore` defines how WorldWind locates, creates, and removes files in the local cache. The default implementation is `gov.nasa.worldwind.cache.BasicDataFileStore`, which extends `AbstractFileStore` and is configured by `config/DataFileStore.xml`.
+
+Retrieve the active file store through `WorldWind.getDataFileStore()`:
+
+```java title="Accessing the file store"
+import gov.nasa.worldwind.WorldWind;
+import gov.nasa.worldwind.cache.FileStore;
+
+FileStore store = WorldWind.getDataFileStore();
+
+// Find a file that was previously cached (searches all read locations)
+java.net.URL url = store.findFile("Earth/BMNGOneImage/BMNGOneImage.dds", false);
+
+// Obtain a File object for a new entry to be written to the writable location
+java.io.File newEntry = store.newFile("MyLayer/tile_0_0.jpg");
+
+// Check whether a file is already present
+boolean cached = store.containsFile("Earth/BMNGOneImage/BMNGOneImage.dds");
+```
+
+### Key FileStore methods
+
+| Method | Description |
+|---|---|
+| `findFile(String fileName, boolean checkClassPath)` | Returns a `URL` to the file if it exists in any search location (and optionally the classpath), or `null` if not found. |
+| `newFile(String fileName)` | Creates an empty `File` at the writable location and returns a reference to it. Returns `null` if no writable location is configured. |
+| `containsFile(String fileName)` | Returns `true` if the file exists anywhere in the search path. |
+| `requestFile(String address)` | Searches locally first; if the address is a remote URL and the file is not cached, queues a retrieval and returns `null`. Returns the `URL` once retrieved. |
+| `requestFile(String address, boolean cacheRemoteFile)` | Same as above but lets you store retrieved files in a temporary location instead of the permanent cache. |
+| `addLocation(String newPath, boolean isInstall)` | Appends a search location to the end of the list. Set `isInstall` to `true` for read-only, installed-data directories that should not be auto-purged. |
+| `addLocation(int index, String newPath, boolean isInstall)` | Inserts a search location at a specific position in the search order. |
+| `removeLocation(String path)` | Removes a search location (the current write location cannot be removed). |
+| `removeFile(String address)` | Deletes a cached entry by its original request address. |
+| `getWriteLocation()` | Returns the `File` that represents the active write location. |
+| `getLocations()` | Returns all currently registered search locations. |
+
+### Default cache locations
+
+The default `config/DataFileStore.xml` resolves write and read locations from Java system properties:
+
+| Property | Typical expansion |
+|---|---|
+| `gov.nasa.worldwind.platform.alluser.store` | System-wide app data directory |
+| `gov.nasa.worldwind.platform.user.store` | Per-user app data directory |
+| `user.home` | Current user's home directory |
+| `user.dir` | JVM working directory |
+| `java.io.tmpdir` | OS temporary directory (fallback write location) |
+
+Each location is suffixed with `WorldWindData` for user data or `WorldWindInstalled` for installed (read-only) datasets.
+
+### Changing the cache location
+
+The `CacheLocationConfiguration` example demonstrates how to redirect the writable cache before WorldWind initializes:
+
+```java title="Redirecting the writable cache (CacheLocationConfiguration pattern)"
+import gov.nasa.worldwind.Configuration;
+import gov.nasa.worldwind.avlist.AVKey;
+
+public static void main(String[] args) {
+    // Point WorldWind at a custom DataFileStore XML before creating any WW object.
+    // The XML file must be on the classpath.
+    Configuration.setValue(
+        AVKey.DATA_FILE_STORE_CONFIGURATION_FILE_NAME,
+        "gov/nasa/worldwindx/examples/data/CacheLocationConfiguration.xml"
+    );
+
+    ApplicationTemplate.start("WorldWind Cache Configuration", AppFrame.class);
+}
+```
+
+A minimal `CacheLocationConfiguration.xml` that redirects writes to `./MyCache`:
+
+```xml title="CacheLocationConfiguration.xml"
+<?xml version="1.0"?>
+<dataFileStore>
+    <readLocations>
+        <location property="gov.nasa.worldwind.platform.alluser.store" wwDir="WorldWindData"/>
+        <location property="gov.nasa.worldwind.platform.user.store"    wwDir="WorldWindData"/>
+        <location property="user.dir"  wwDir="WorldWindData"/>
+        <location property="user.home" wwDir="WorldWindData"/>
+        <location property="gov.nasa.worldwind.platform.alluser.store"
+                  wwDir="WorldWindInstalled" isInstall="true" isMarkWhenUsed="true"/>
+    </readLocations>
+    <writeLocations>
+        <!-- Use a path relative to the working directory -->
+        <location property="" wwDir="./MyCache" create="true"/>
+    </writeLocations>
+</dataFileStore>
+```
+
+## Memory Cache
+
+### Interface and default implementation
+
+`gov.nasa.worldwind.cache.MemoryCache` defines a synchronized in-memory cache keyed by arbitrary objects. The default implementation, `gov.nasa.worldwind.cache.BasicMemoryCache`, uses an LRU eviction strategy based on each entry's `lastUsed` timestamp. When the cache fills past its capacity, it removes the least-recently-used entries until used capacity drops to the configured **low-water mark**.
+
+All WorldWind layers obtain their `MemoryCache` instances from the `MemoryCacheSet`, which is accessed via `WorldWind.getMemoryCacheSet()`:
+
+```java title="Accessing a named memory cache"
+import gov.nasa.worldwind.WorldWind;
+import gov.nasa.worldwind.cache.MemoryCache;
+import gov.nasa.worldwind.cache.MemoryCacheSet;
+
+MemoryCacheSet cacheSet = WorldWind.getMemoryCacheSet();
+
+// Retrieve a named cache (the key is typically an AVKey string or a class name)
+MemoryCache tileCache = WorldWind.getMemoryCache(
+    "gov.nasa.worldwind.layers.TextureLayer.TextureTiles"
+);
+
+if (tileCache != null) {
+    long used     = tileCache.getUsedCapacity();
+    long capacity = tileCache.getCapacity();
+    long free     = tileCache.getFreeCapacity();
+    System.out.printf("Tile cache: %d / %d bytes used%n", used, capacity);
+}
+```
+
+### Key MemoryCache methods
+
+| Method | Description |
+|---|---|
+| `add(Object key, Object clientObject, long objectSize)` | Adds an entry with an explicit size. Returns `true` on success. |
+| `add(Object key, Cacheable clientObject)` | Adds a `Cacheable` object; the cache queries `clientObject.getSizeInBytes()` for the size. |
+| `getObject(Object key)` | Returns the cached object, or `null` if not present. |
+| `contains(Object key)` | Returns `true` if the key is in the cache. |
+| `remove(Object key)` | Removes the entry for `key`. |
+| `clear()` | Empties the cache and notifies all `CacheListener`s. |
+| `getCapacity()` | Returns the maximum capacity in cache units (bytes). |
+| `getUsedCapacity()` | Returns currently used capacity. |
+| `getFreeCapacity()` | Returns available space. |
+| `getLowWater()` / `setLowWater(long)` | Gets/sets the low-water mark for LRU eviction. |
+| `setCapacity(long)` | Changes the maximum capacity. |
+| `addCacheListener(CacheListener)` | Registers a listener notified when entries are evicted. |
+
+### Configuring memory cache capacities
+
+Cache sizes are set in `worldwind.xml` via `<Property>` elements and can be overridden programmatically. The corresponding `AVKey` constants are:
+
+| AVKey Constant | Default value | Controlled cache |
+|---|---|---|
+| `AVKey.TEXTURE_CACHE_SIZE` | `500000000` (500 MB) | GPU texture cache (see next section) |
+| `AVKey.ELEVATION_TILE_CACHE_SIZE` | `20000000` (20 MB) | Elevation tile memory cache |
+| `AVKey.SECTOR_GEOMETRY_CACHE_SIZE` | `10000000` (10 MB) | Tessellated sector geometry |
+| `AVKey.TEXTURE_IMAGE_CACHE_SIZE` | `10000000` (10 MB) | Texture tile images |
+| `AVKey.PLACENAME_LAYER_CACHE_SIZE` | `4000000` (4 MB) | Place-name layer |
+| `AVKey.AIRSPACE_GEOMETRY_CACHE_SIZE` | `32000000` (32 MB) | Airspace rendered geometry |
+
+```java title="Tuning memory cache sizes before startup"
+import gov.nasa.worldwind.Configuration;
+import gov.nasa.worldwind.avlist.AVKey;
+
+// Increase elevation tile memory cache to 40 MB
+Configuration.setValue(AVKey.ELEVATION_TILE_CACHE_SIZE, 40_000_000L);
+
+// Reduce sector geometry cache on memory-constrained devices
+Configuration.setValue(AVKey.SECTOR_GEOMETRY_CACHE_SIZE, 5_000_000L);
+```
+
+## GPU Resource Cache
+
+### Interface and default implementation
+
+`gov.nasa.worldwind.cache.GpuResourceCache` manages OpenGL resources resident on the GPU. The default implementation, `gov.nasa.worldwind.cache.BasicGpuResourceCache`, keeps track of textures, VBO IDs, and display list IDs by size in bytes, evicting the least-recently-used resources when the cache overflows. When a resource is evicted and a GL context is current, the cache calls the appropriate `glDelete*` function to free the GPU resource; without a current context, the GPU-side resource leaks until the GL context is destroyed.
+
+Access the GPU cache through the active `WorldWindow`:
+
+```java title="Accessing the GPU resource cache"
+import gov.nasa.worldwind.WorldWindow;
+import gov.nasa.worldwind.cache.GpuResourceCache;
+
+// wwd is a WorldWindowGLCanvas or WorldWindowGLJPanel
+GpuResourceCache gpuCache = wwd.getGpuResourceCache();
+
+long gpuUsed     = gpuCache.getUsedCapacity();
+long gpuCapacity = gpuCache.getCapacity();
+System.out.printf("GPU cache: %d / %d bytes%n", gpuUsed, gpuCapacity);
+
+// Manually evict all GPU resources (e.g. before a context switch)
+gpuCache.clear();
+```
+
+### Key GpuResourceCache methods
+
+| Method | Description |
+|---|---|
+| `put(Object key, Texture texture)` | Stores a JOGL `Texture` object; size is computed from texture dimensions and format. |
+| `put(Object key, Object resource, String resourceType, long size)` | Stores a VBO (`GpuResourceCache.VBO_BUFFERS`) or display list (`GpuResourceCache.DISPLAY_LISTS`) with an explicit byte size. |
+| `get(Object key)` | Returns the cached resource or `null`. |
+| `getTexture(Object key)` | Convenience method; returns the resource cast to `Texture`. |
+| `contains(Object key)` | Returns `true` if the key is present. |
+| `remove(Object key)` | Removes and (if a GL context is current) deletes the resource from the GPU. |
+| `clear()` | Removes and deletes all cached resources. |
+| `getCapacity()` / `setCapacity(long)` | Gets/sets cache capacity in bytes. |
+| `getLowWater()` / `setLowWater(long)` | Gets/sets the eviction low-water mark. |
+| `getUsedCapacity()` / `getFreeCapacity()` | Reporting methods. |
+
+### Resource type constants
+
+`GpuResourceCache` declares three string constants that identify resource types passed to `put()`:
+
+- `GpuResourceCache.TEXTURE` — a JOGL `com.jogamp.opengl.util.texture.Texture`
+- `GpuResourceCache.VBO_BUFFERS` — an `int[]` of vertex buffer object IDs
+- `GpuResourceCache.DISPLAY_LISTS` — an `int[]` of display list IDs
+
+### Configuring GPU cache capacity
+
+The GPU texture cache capacity is controlled by `AVKey.TEXTURE_CACHE_SIZE`. The default value shipped in `worldwind.xml` is 500 MB:
+
+```java title="Changing GPU texture cache size"
+// Must be called before the WorldWindow is created.
+Configuration.setValue(AVKey.TEXTURE_CACHE_SIZE, 1_000_000_000L); // 1 GB
+```
+
+<Warning>
+Do not set the GPU resource cache too small. When the cache can no longer hold the textures required for a single frame, WorldWind will repeatedly upload and evict the same textures every frame, causing severe rendering stalls and dramatically reduced frame rates. A practical minimum is 256 MB for globe rendering.
+</Warning>
+
+## Session Cache
+
+`gov.nasa.worldwind.cache.SessionCache` is a lightweight key-value store whose entries persist for the lifetime of the JVM process but may be evicted at any time. The default implementation, `gov.nasa.worldwind.cache.BasicSessionCache`, uses a `LinkedHashMap` configured for eldest-entry eviction once the maximum entry count is reached.
+
+Access the session cache through `WorldWind.getSessionCache()`:
+
+```java title="Using the session cache"
+import gov.nasa.worldwind.WorldWind;
+import gov.nasa.worldwind.cache.SessionCache;
+
+SessionCache sessionCache = WorldWind.getSessionCache();
+
+// Store a transient value
+sessionCache.put("myapp.lastQueryTime", System.currentTimeMillis());
+
+// Retrieve it
+Long lastQuery = (Long) sessionCache.get("myapp.lastQueryTime");
+
+// Check presence
+boolean present = sessionCache.contains("myapp.lastQueryTime");
+
+// Remove a single entry
+sessionCache.remove("myapp.lastQueryTime");
+
+// Clear everything
+sessionCache.clear();
+```
+
+The `SessionCache` class name is configurable through `AVKey.SESSION_CACHE_CLASS_NAME` (`gov.nasa.worldwind.avkey.SessionCacheClassName`), allowing the eviction policy to be swapped by subclassing.
+
+## Clearing Caches
+
+### On memory pressure
+
+If the host application detects low available heap memory it should clear the memory caches before other recovery actions:
+
+```java title="Clearing memory caches on low-memory notification"
+import gov.nasa.worldwind.WorldWind;
+import gov.nasa.worldwind.cache.MemoryCacheSet;
+
+MemoryCacheSet memoryCacheSet = WorldWind.getMemoryCacheSet();
+
+// Iterate every registered MemoryCache and clear it
+for (MemoryCache cache : memoryCacheSet.getAllCaches()) {
+    cache.clear();
+}
+```
+
+### Before an OpenGL context switch
+
+When sharing an OpenGL context across multiple `WorldWindow` instances, or before destroying the GL context entirely, clear the GPU cache while the context is still current:
+
+```java title="Clearing the GPU cache before context shutdown"
+// Must be called on the EDT with an active OpenGL context.
+wwd.getGpuResourceCache().clear();
+```
+
+<Note>
+`MemoryCache.clear()` is safe to call from any thread; all implementations of `MemoryCache` are required by the interface contract to declare the method `synchronized`. `GpuResourceCache.clear()` must be called when a GL context is current to ensure GPU-side resources are properly deleted.
+</Note>

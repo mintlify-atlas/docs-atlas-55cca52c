@@ -1,0 +1,341 @@
+---
+title: "Model and SceneController: Globe, Layers, and Render Loop"
+sidebarTitle: "Model & SceneController"
+description: "The WorldWind Model interface combines a Globe and LayerList. SceneController drives the render and pick loops. BasicModel and BasicSceneController are the default implementations."
+---
+
+In the WorldWind architecture, the `Model` and `SceneController` form the backbone of every rendered frame. A `Model` is a pure data container: it holds the `Globe` (geometry, elevation, and projection of the planet) and the `LayerList` (the ordered stack of imagery, annotations, shapes, and any other visual content). The `SceneController` is the engine that consumes the model each frame: it sets up the `DrawContext`, runs the render pass, runs the pick pass, accumulates performance statistics, and fires rendering events. A `WorldWindow` delegates all frame-generation work to its `SceneController`, which in turn queries the `Model` for what to draw.
+
+---
+
+## Model Interface
+
+**Package:** `gov.nasa.worldwind`
+**Interface:** `public interface Model extends WWObject`
+
+The `Model` interface aggregates a globe and a set of layers. Through the globe it also indirectly includes the elevation model and the surface-geometry tessellator. A default model is defined in `worldwind.xml` (or an application-supplied alternate) and is used whenever `BasicModel` is constructed with its no-argument constructor.
+
+### getGlobe / setGlobe
+
+```java title="Globe access"
+Globe getGlobe()
+void setGlobe(Globe globe)
+```
+
+Gets or replaces the `Globe` associated with this model. When a new globe is set, the model registers itself as a `PropertyChangeListener` on the new globe and deregisters from the old one, so that globe changes (e.g., projection switches) automatically propagate to the model's observers.
+
+<ParamField path="globe" type="Globe">
+  The replacement globe. May be `null` to detach the current globe from the model.
+</ParamField>
+
+---
+
+### getLayers / setLayers
+
+```java title="Layer list access"
+LayerList getLayers()
+void setLayers(LayerList layers)
+```
+
+Gets or replaces the ordered `LayerList`. Layers are rendered in list order — earlier entries are drawn first (further from the viewer). Replacing the list fires an `AVKey.LAYERS` property-change event so the scene controller can schedule a repaint.
+
+<ParamField path="layers" type="LayerList">
+  The replacement layer list. May be `null` to detach the current layers.
+</ParamField>
+
+---
+
+### getExtent
+
+```java title="Bounding extent"
+gov.nasa.worldwind.geom.Extent getExtent()
+```
+
+Returns the bounding sphere of the model in Cartesian world coordinates. The implementation checks the layer list first, then falls back to the globe's own extent. Returns `null` if neither can produce an extent.
+
+**Returns:** `Extent` — the bounding sphere, or `null`.
+
+---
+
+### Wireframe Debugging Flags
+
+These flags are intended for development and debugging. All default to `false`.
+
+```java title="Wireframe and bounding-volume flags"
+void    setShowWireframeInterior(boolean show)
+boolean isShowWireframeInterior()
+
+void    setShowWireframeExterior(boolean show)
+boolean isShowWireframeExterior()
+
+void    setShowTessellationBoundingVolumes(boolean showTileBoundingVolumes)
+boolean isShowTessellationBoundingVolumes()
+```
+
+| Method pair | Effect when `true` |
+|---|---|
+| `showWireframeInterior` | Renders the interior faces of the globe's tessellated surface geometry as wireframe. |
+| `showWireframeExterior` | Renders the exterior faces of the tessellated surface geometry as wireframe. |
+| `showTessellationBoundingVolumes` | Draws the bounding boxes/spheres of each tessellation tile — useful for diagnosing LOD and culling behaviour. |
+
+```java title="Enabling wireframe for debugging"
+Model model = wwd.getModel();
+model.setShowWireframeInterior(true);
+model.setShowTessellationBoundingVolumes(true);
+wwd.redraw();
+```
+
+---
+
+## BasicModel
+
+**Package:** `gov.nasa.worldwind`
+**Class:** `public class BasicModel extends WWObjectImpl implements Model`
+
+`BasicModel` is the standard `Model` implementation used in virtually all WorldWind applications. It extends `WWObjectImpl` so it participates fully in the attribute-value list and property-change event infrastructure.
+
+### Constructors
+
+```java title="No-argument constructor — configuration-driven"
+public BasicModel()
+```
+
+Reads the globe class name from `Configuration` (`AVKey.GLOBE_CLASS_NAME`) and instantiates it via `WorldWind.createComponent()`. The default globe is `gov.nasa.worldwind.globes.Earth` — a WGS84 ellipsoid.
+
+Layer construction follows a two-path strategy:
+1. **Legacy path:** if `AVKey.LAYERS_CLASS_NAMES` is present in the configuration (a comma-separated list of class names), those layers are instantiated directly.
+2. **Modern path (default):** the `<LayerList>` XML element in `worldwind.xml` is parsed by `BasicFactory` using `AVKey.LAYER_FACTORY`. The default configuration produces a layer list that typically includes:
+   - **Stars** — background star field
+   - **Atmosphere** — sky/atmosphere effect
+   - **NASA Blue Marble** — base satellite imagery
+   - **Landsat Imagery** — medium-resolution imagery
+   - **USGS Topo Maps** — vector topographic overlays
+   - **Political Boundaries** — country/region outlines
+   - **Place Names** — geographic labels
+
+If neither configuration path yields any layers, an empty `LayerList` is used (not an error).
+
+```java title="Programmatic constructor"
+public BasicModel(Globe globe, LayerList layers)
+```
+
+Creates a model from explicitly provided globe and layer list instances, bypassing all configuration. Pass `null` for `layers` to start with an empty list.
+
+<ParamField path="globe" type="Globe">
+  The globe to use (e.g., `new Earth()`, `new EarthFlat()`).
+</ParamField>
+<ParamField path="layers" type="LayerList">
+  The initial layer list. May be `null` for an empty list.
+</ParamField>
+
+```java title="Creating a custom BasicModel"
+Globe earth = new Earth();
+LayerList layers = new LayerList();
+layers.add(new BMNGWMSLayer());
+layers.add(new PlaceNameLayer());
+
+BasicModel model = new BasicModel(earth, layers);
+wwd.setModel(model);
+```
+
+---
+
+## Restorable and Disposable
+
+WorldWind defines two small lifecycle interfaces that several core classes implement. Understanding them is important when managing objects that hold XML state or OpenGL resources.
+
+### Restorable
+
+**Package:** `gov.nasa.worldwind`
+**Interface:** `public interface Restorable`
+
+`Restorable` enables serialisation and deserialisation of an object's internal state as an XML document string. This allows shapes, views, and other stateful objects to be saved to a file or database and restored exactly.
+
+```java title="Restorable interface"
+String getRestorableState()
+void   restoreState(String stateInXml)
+```
+
+<ParamField path="stateInXml" type="String">
+  An XML document string previously produced by `getRestorableState()` on an instance of the same class. Implementations are required to silently ignore unknown XML elements to ensure forward compatibility.
+</ParamField>
+
+```java title="Saving and restoring a view"
+// Capture the current camera state
+String savedState = view.getRestorableState();
+
+// ... later, restore it
+view.restoreState(savedState);
+wwd.redraw();
+```
+
+---
+
+### Disposable
+
+**Package:** `gov.nasa.worldwind`
+**Interface:** `public interface Disposable`
+
+`Disposable` marks objects that allocate resources requiring explicit cleanup — most commonly OpenGL objects (textures, VBOs, display lists) that must be freed on the correct OpenGL context thread. `SceneController` implements `Disposable`; so do many layer and shape types.
+
+```java title="Disposable interface"
+void dispose()
+```
+
+Call `dispose()` only when an OpenGL context for the relevant window is current. After `dispose()` returns the object must not be used again.
+
+```java title="Disposing a layer"
+Layer layer = wwd.getModel().getLayers().getLayerByName("My Layer");
+if (layer instanceof Disposable) {
+    ((Disposable) layer).dispose();
+}
+wwd.getModel().getLayers().remove(layer);
+```
+
+---
+
+## SceneController Interface
+
+**Package:** `gov.nasa.worldwind`
+**Interface:** `public interface SceneController extends WWObject, Disposable`
+
+`SceneController` drives everything that happens inside a single rendered frame. Each call to `repaint()` performs a full render pass (geometry, imagery, shapes, annotations) followed by a pick pass (identifying objects under the cursor and within the selection rectangle). The controller maintains timing statistics and exposes the `DrawContext` that custom renderers use during the render pass.
+
+### getModel / setModel
+
+```java title="Model binding"
+Model getModel()
+void  setModel(Model model)
+```
+
+Attaches a `Model` to this controller. Fires an `AVKey.MODEL` property-change event on assignment, which causes the owning `WorldWindow` to schedule a repaint.
+
+---
+
+### getView / setView
+
+```java title="View binding"
+View getView()
+void setView(View view)
+```
+
+Attaches a `View` (camera) to this controller. Fires an `AVKey.VIEW` property-change event on assignment.
+
+---
+
+### getDrawContext
+
+```java title="Draw context access"
+DrawContext getDrawContext()
+```
+
+Returns the `DrawContext` for the current (or most recently completed) frame. Custom renderers and layers receive the `DrawContext` as a method argument during rendering; this accessor is for post-frame inspection.
+
+**Returns:** `DrawContext`
+
+---
+
+### Pick Control
+
+```java title="Pick enabling"
+void    setDeepPickEnabled(boolean tf)
+boolean isDeepPickEnabled()
+```
+
+When deep pick is **disabled** (default), the scene controller stops picking as soon as the topmost object is identified — this is the fast path used during normal interaction. When deep pick is **enabled**, the controller identifies *all* objects under the cursor at every frame, populating the full `PickedObjectList`. Deep pick has a measurable performance cost and should only be enabled when the application genuinely needs the complete list.
+
+<ParamField path="tf" type="boolean">
+  `true` to enable deep picking of all objects under the cursor; `false` (default) for top-object-only picking.
+</ParamField>
+
+---
+
+### getLastPickedObjects
+
+```java title="Picked object list"
+PickedObjectList getPickedObjectList()
+```
+
+Returns the list of objects identified at the current pick point during the most recent frame. If deep pick is disabled this list contains only the topmost object. Returns `null` if no objects are under the cursor.
+
+**Returns:** `PickedObjectList`
+
+---
+
+### Performance Metrics
+
+```java title="Frame rate and timing"
+double getFramesPerSecond()
+double getFrameTime()
+```
+
+`getFramesPerSecond()` returns the rolling-average frames rendered per second across recent frames. `getFrameTime()` returns the timestamp (in milliseconds) of the most recently completed frame — useful for synchronising external animations.
+
+**Returns:** `double`
+
+---
+
+### setPerFrameStatisticsKeys
+
+```java title="Activating per-frame statistics"
+void setPerFrameStatisticsKeys(Set<String> keys)
+Collection<PerformanceStatistic> getPerFrameStatistics()
+```
+
+Activates the named performance metrics for measurement during each frame. Available keys are defined as constants on `PerformanceStatistic` (e.g., `PerformanceStatistic.FRAME_RATE`, `PerformanceStatistic.TERRAIN_TILE_COUNT`). The matching `Collection<PerformanceStatistic>` can be retrieved from the scene controller or from `WorldWindow.getPerFrameStatistics()` after each frame.
+
+<ParamField path="keys" type="Set&lt;String&gt;">
+  The set of `PerformanceStatistic` key strings to activate. Pass an empty set to disable all metrics.
+</ParamField>
+
+---
+
+### Vertical Exaggeration
+
+```java title="Vertical exaggeration"
+void   setVerticalExaggeration(double verticalExaggeration)
+double getVerticalExaggeration()
+```
+
+Scales all terrain elevations by the given factor. A value of `1.0` (the default) shows true-scale terrain. Larger values visually exaggerate mountains and valleys; useful for educational presentations of subtle topography. This value is written into the `DrawContext` each frame and affects all terrain-following rendering.
+
+<ParamField path="verticalExaggeration" type="double">
+  Elevation scale factor. Default is `1.0`.
+</ParamField>
+
+---
+
+## AbstractSceneController and BasicSceneController
+
+**`AbstractSceneController`** (`gov.nasa.worldwind.AbstractSceneController`) is the abstract base class that provides the concrete implementation of nearly all `SceneController` methods. It manages the `DrawContext` (`DrawContextImpl`), pick point/rectangle state, per-frame timing (`framesPerSecond`, `frameTime`, `pickTime`), the `PickedObjectList` (`lastPickedObjects`, `lastObjectsInPickRect`), and the colour-coded pick map used to resolve multiple simultaneous picks.
+
+**`BasicSceneController`** (`gov.nasa.worldwind.BasicSceneController`) extends `AbstractSceneController` and provides the concrete `doRepaint(DrawContext)` implementation. It handles both normal (3D) and 2D-contiguous (flat/cylindrical) rendering modes by delegating to `doNormalRepaint` or `do2DContiguousRepaint` based on the globe type. This is the default controller installed by `WorldWindowImpl` via `AVKey.SCENE_CONTROLLER_CLASS_NAME`.
+
+**`StereoSceneController`** (`gov.nasa.worldwind.StereoSceneController`) is an alternate controller that renders the scene twice per frame — once for each eye — using either quad-buffered stereo (hardware stereo glasses) or red/cyan anaglyph. It is specified in the default `worldwind.xml` configuration and falls back transparently to mono rendering when no stereo device is available.
+
+```java title="Enabling deep pick via the scene controller"
+import gov.nasa.worldwind.*;
+import gov.nasa.worldwind.pick.PickedObjectList;
+
+// Retrieve the active scene controller
+SceneController sc = wwd.getSceneController();
+
+// Enable deep pick so all overlapping objects are identified each frame
+sc.setDeepPickEnabled(true);
+
+// After the next repaint, the full pick list is available
+wwd.addSelectListener(event -> {
+    PickedObjectList all = sc.getPickedObjectList();
+    if (all != null) {
+        all.forEach(po -> System.out.println("Picked object: " + po.getObject()));
+    }
+});
+
+wwd.redraw();
+```
+
+```java title="Adjusting vertical exaggeration"
+// Exaggerate terrain elevations 3× for dramatic effect
+wwd.getSceneController().setVerticalExaggeration(3.0);
+wwd.redraw();
+```

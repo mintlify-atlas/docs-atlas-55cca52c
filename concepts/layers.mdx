@@ -1,0 +1,208 @@
+---
+title: "Layer Architecture in WorldWind Java"
+sidebarTitle: "Layers"
+description: "WorldWind Java uses a layer stack to compose the globe. Each layer renders independently, supporting imagery, shapes, annotations, graticules, and more."
+---
+
+WorldWind Java composes the globe scene by stacking layers. Each frame the `SceneController` iterates the `LayerList` from the first entry to the last, calling `render()` on every enabled layer. Layers at the beginning of the list are painted first and may be obscured by layers above them; layers at the end of the list appear on top. This ordering is how imagery sits beneath shapes, which in turn sit beneath UI overlays like the compass and scalebar. Every layer is independent — it maintains its own enabled state, opacity, altitude-activation range, and network-retrieval flag — and can be added, removed, or reordered at any time.
+
+## The Layer Interface
+
+All layers implement `gov.nasa.worldwind.layers.Layer`. The interface defines the complete lifecycle of a layer within the render and pick passes:
+
+```java Layer interface — key method signatures
+// Enable / disable rendering and picking for this layer
+boolean isEnabled();
+void setEnabled(boolean enabled);
+
+// Human-readable name (used by LayerPanel and getLayerByName)
+String getName();
+void setName(String name);
+
+// Opacity blending with underlying layers (0.0 = fully transparent, 1.0 = fully opaque)
+double getOpacity();
+void setOpacity(double opacity);
+
+// Control whether this layer participates in pick passes
+boolean isPickEnabled();
+void setPickEnabled(boolean isPickable);
+
+// Altitude-activation range — layer is only rendered within this altitude band
+double getMinActiveAltitude();
+void setMinActiveAltitude(double minActiveAltitude);
+double getMaxActiveAltitude();
+void setMaxActiveAltitude(double maxActiveAltitude);
+
+// Network data retrieval (applies to tiled and WMS-backed layers)
+boolean isNetworkRetrievalEnabled();
+void setNetworkRetrievalEnabled(boolean networkRetrievalEnabled);
+
+// Rendering and picking callbacks (called by SceneController each frame)
+void preRender(DrawContext dc);
+void render(DrawContext dc);
+void pick(DrawContext dc, java.awt.Point pickPoint);
+
+// Whether the most recent render used the highest-resolution data available
+boolean isAtMaxResolution();
+boolean isMultiResolution();
+```
+
+## Layer Types
+
+<CardGroup cols={2}>
+  <Card title="RenderableLayer" icon="layer-group">
+    The most commonly used layer type. Holds a collection of `Renderable` objects — any shape, path, polygon, surface image, or annotation that implements `gov.nasa.worldwind.render.Renderable`. Add content with `addRenderable(Renderable)` and remove it with `removeRenderable(Renderable)` or `removeAllRenderables()`.
+  </Card>
+
+  <Card title="TiledImageLayer / BasicTiledImageLayer" icon="map">
+    Displays tiled raster imagery at multiple levels of detail. `BasicTiledImageLayer` is the configurable base for WMS layers and local tile pyramids. The SDK includes pre-built subclasses such as `BMNGOneImage`, `LandsatI3`, and `BingImagery` that are backed by remote WMS endpoints or local data.
+  </Card>
+
+  <Card title="AnnotationLayer" icon="comment">
+    Renders geographic `Annotation` objects — text bubbles and callouts anchored to positions on the globe or screen. Subclasses include `GlobeAnnotationLayer` (annotations at geographic positions) and `ScreenAnnotationLayer` (fixed screen-space annotations).
+  </Card>
+
+  <Card title="IconLayer" icon="location-dot">
+    Manages a collection of `WWIcon` objects — billboarded icons placed at geographic positions. Supports automatic decluttering and level-of-detail scaling based on eye altitude.
+  </Card>
+
+  <Card title="MarkerLayer" icon="map-pin">
+    Renders `Marker` objects — simple geometric primitives (cones, cylinders, spheres) placed at geographic positions. Lighter-weight than icons; useful for large numbers of point features.
+  </Card>
+
+  <Card title="CompassLayer / ScalebarLayer / WorldMapLayer" icon="compass">
+    Built-in UI overlay layers. `CompassLayer` draws a north-seeking compass rose. `ScalebarLayer` draws a distance scalebar calibrated to the current zoom level. `WorldMapLayer` draws a small overview map with a position indicator showing the current view center.
+  </Card>
+
+  <Card title="SkyGradientLayer / StarsLayer" icon="star">
+    Atmosphere and deep-space background layers. `SkyGradientLayer` renders the atmospheric limb and sky color gradient. `StarsLayer` renders a star field from the Hipparcos catalog, providing a realistic background at high altitudes.
+  </Card>
+
+  <Card title="LatLonGraticuleLayer / GARSGraticuleLayer" icon="grid">
+    Coordinate-grid overlay layers. `LatLonGraticuleLayer` draws WGS84 latitude/longitude grid lines with degree labels. `GARSGraticuleLayer` renders the Global Area Reference System 30-minute and 15-minute cell grid used in military operations.
+  </Card>
+</CardGroup>
+
+## Managing the Layer List
+
+`LayerList` (`gov.nasa.worldwind.layers.LayerList`) extends `CopyOnWriteArrayList<Layer>` and adds WorldWind-specific helpers. Because it is copy-on-write, iterating it while another thread modifies it is safe — mutations produce a new backing array without disrupting ongoing reads.
+
+```java LayerList operations — add, remove, reorder, and find
+LayerList layers = wwd.getModel().getLayers();
+
+// Add a layer to the top of the stack (rendered last / on top)
+RenderableLayer myLayer = new RenderableLayer();
+myLayer.setName("My Shapes");
+layers.add(myLayer);
+
+// Insert at a specific index (0 = bottom of stack)
+layers.add(0, new StarsLayer());
+
+// Remove by reference
+layers.remove(myLayer);
+
+// Remove by index
+layers.remove(3);
+
+// Look up a layer by name
+Layer compass = layers.getLayerByName("Compass");
+
+// Look up all layers of a given type
+List<Layer> tiledLayers = layers.getLayersByClass(TiledImageLayer.class);
+
+// Iterate all layers
+for (Layer layer : layers) {
+    System.out.println(layer.getName() + " opacity=" + layer.getOpacity());
+}
+```
+
+The `ApplicationTemplate` class (used throughout the WorldWind examples) also provides convenience static methods for inserting layers at semantically meaningful positions:
+
+```java ApplicationTemplate insertion helpers
+// Insert just before the CompassLayer
+ApplicationTemplate.insertBeforeCompass(wwd, myLayer);
+
+// Insert just before the PlaceNameLayer (NASAWFSPlaceNameLayer)
+ApplicationTemplate.insertBeforePlacenames(wwd, myLayer);
+
+// Insert just after the PlaceNameLayer
+ApplicationTemplate.insertAfterPlacenames(wwd, myLayer);
+
+// Insert before a layer whose name contains a substring
+ApplicationTemplate.insertBeforeLayerName(wwd, myLayer, "Landsat");
+```
+
+## Adding Content to a RenderableLayer
+
+```java Adding a RenderableLayer with shapes to the globe
+import gov.nasa.worldwind.geom.*;
+import gov.nasa.worldwind.layers.RenderableLayer;
+import gov.nasa.worldwind.render.*;
+
+// Create the layer
+RenderableLayer layer = new RenderableLayer();
+layer.setName("Polygons");
+layer.setOpacity(0.8);
+
+// Create a surface polygon and add it to the layer
+ShapeAttributes attrs = new BasicShapeAttributes();
+attrs.setInteriorMaterial(Material.RED);
+attrs.setInteriorOpacity(0.5);
+attrs.setOutlineMaterial(Material.WHITE);
+
+SurfacePolygon polygon = new SurfacePolygon(attrs);
+polygon.addOuterBoundary(java.util.Arrays.asList(
+    LatLon.fromDegrees(37.0, -122.0),
+    LatLon.fromDegrees(37.0, -118.0),
+    LatLon.fromDegrees(34.0, -118.0),
+    LatLon.fromDegrees(34.0, -122.0)
+));
+layer.addRenderable(polygon);
+
+// Add the layer above all existing layers
+wwd.getModel().getLayers().add(layer);
+wwd.redraw();
+```
+
+## Enabling and Disabling a Layer by Name
+
+```java Toggling a named layer on and off
+LayerList layers = wwd.getModel().getLayers();
+
+// Disable the scalebar overlay
+Layer scalebar = layers.getLayerByName("Scale bar");
+if (scalebar != null) {
+    scalebar.setEnabled(false);
+}
+
+// Toggle the star field
+Layer stars = layers.getLayerByName("Stars");
+if (stars != null) {
+    stars.setEnabled(!stars.isEnabled());
+    wwd.redraw();
+}
+```
+
+## Default Layers
+
+When `BasicModel` is constructed from the default `worldwind.xml` configuration, it reads its layer list from `config/worldwind.layers.xml`. The following layers are loaded and enabled out-of-the-box, in bottom-to-top render order:
+
+| Layer Class | Default Name | Notes |
+|---|---|---|
+| `StarsLayer` | Stars | Hipparcos star catalog background |
+| `SkyGradientLayer` | Sky | Atmospheric limb gradient |
+| `BMNGOneImage` | Blue Marble (One Image) | Low-res earth backdrop; active above 3,000 km |
+| `BMNGWMSLayer` | Blue Marble May 2004 | WMS-sourced multi-resolution BMNG imagery |
+| `LandsatI3` | i-cubed Landsat | 15m Landsat imagery via WMS |
+| `USGSNAIPPlusLayer` | USGS NAIP PLUS | High-res aerial (US only); loaded on request |
+| `BingImagery` | Bing Imagery | Bing satellite/aerial; loaded on request |
+| `NASAWFSPlaceNameLayer` | Place Names | NASA WFS geographic names |
+| `WorldMapLayer` | World Map | Overview map overlay |
+| `ScalebarLayer` | Scale bar | Distance scalebar |
+| `CompassLayer` | Compass | North-seeking compass rose |
+
+<Tip>
+Layer **order** matters: layers earlier in the list are drawn first and can be obscured by later ones. Place imagery layers at the bottom, followed by shape and annotation layers, then UI overlay layers (compass, scalebar, world map) at the top.
+
+Layer **opacity** is applied by the individual layer's renderer. For `TiledImageLayer`-derived layers, `setOpacity(0.5)` blends the layer's imagery with whatever is beneath it. For `RenderableLayer`, opacity on the layer itself only affects shapes that honor the layer opacity; shapes with explicit per-attribute opacity settings may override the layer-level value.
+</Tip>

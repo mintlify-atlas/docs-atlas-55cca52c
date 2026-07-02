@@ -1,0 +1,258 @@
+---
+title: "Supported Geospatial File Formats in WorldWind Java"
+sidebarTitle: "Formats"
+description: "Reference for geospatial file format support in NASA WorldWind Java: Shapefile, GeoJSON, GeoTIFF, DTED, GPX, NMEA, RPF, VPF, DDS, and more."
+---
+
+NASA WorldWind Java ships with built-in parsers and writers for a broad range of geospatial file formats under the `gov.nasa.worldwind.formats` package hierarchy. Each sub-package targets a specific format family, from vector data (Shapefile, GeoJSON, VPF) to raster imagery (GeoTIFF, DDS, RPF) and GPS tracks (GPX, NMEA). When the optional native GDAL library is present, dozens of additional formats become available through `GDALDataRasterReader`.
+
+---
+
+## Format Overview
+
+| Package | Format | Key Classes |
+|---|---|---|
+| `formats/shapefile` | ESRI Shapefile | `Shapefile`, `ShapefileRecord`, `ShapefileLayerFactory` |
+| `formats/geojson` | GeoJSON | `GeoJSONDoc`, `GeoJSONGeometry`, `GeoJSONObject` |
+| `formats/tiff` | GeoTIFF raster | `GeotiffReader`, `GeotiffWriter`, `GeoTiff` |
+| `formats/dted` | DTED elevation | `DTEDRasterReader` (in `data` package) |
+| `formats/gpx` | GPX GPS tracks | `GPXDoc`, `GPXTrack`, `GPXWaypoint` |
+| `formats/nmea` | NMEA-0183 sentences | `NMEAReader`, `NMEASentence` |
+| `formats/rpf` | CADRG/CIB raster maps | `RPFFrameFilename`, `RPFTOCFile`, `RPFRasterReader` |
+| `formats/vpf` | Vector Product Format | `VPFDatabase`, `VPFCoverage`, `VPFFeatureClass` |
+| `formats/dds` | DirectDraw Surface | `DDSReader`, `DDSCompressor` |
+| `formats/csv` | CSV tabular data | `CSVReader` |
+| `formats/georss` | GeoRSS feeds | `GeoRSSParser`, `SimpleGeoRSSParser` |
+| `formats/worldfile` | World file raster georef | `WorldFile` |
+| `formats/nitfs` | NITF image | `NITFSImageBand`, `NITFSSegment` |
+
+<Note>
+  With the native GDAL library present and configured (`AVKey.GDAL_PATH`), `GDALDataRasterReader` additionally supports ECW, MrSID, JP2000, HDF, NetCDF, VRT, and any other GDAL-registered driver. See [Data Raster API](/api/data-raster) for GDAL details.
+</Note>
+
+---
+
+## Shapefile (`formats/shapefile`)
+
+The Shapefile package provides full support for reading ESRI Shapefile (`.shp`/`.dbf`/`.shx`/`.prj`) vector datasets.
+
+### Classes
+
+| Class | Description |
+|---|---|
+| `Shapefile` | Top-level reader; iterates `ShapefileRecord` objects from a `.shp` file. |
+| `ShapefileRecord` | Base class for all record types; carries geometry and attribute reference. |
+| `ShapefileRecordPoint` | A single `(x, y)` point record. |
+| `ShapefileRecordPolyline` | One or more polyline parts, each a sequence of points. |
+| `ShapefileRecordPolygon` | One or more polygon rings with optional holes. |
+| `ShapefileRecordMultiPoint` | Multiple points in a single record. |
+| `ShapefileRecordNull` | Empty / null geometry record. |
+| `DBaseFile` | Opens the `.dbf` attribute table. |
+| `DBaseRecord` | A single row from the `.dbf` attribute table. |
+| `DBaseField` | Column metadata (name, type, length). |
+| `ShapefileLayerFactory` | High-level factory: creates a `RenderableLayer` or `Layer` from a Shapefile URL. |
+| `ShapefilePolygons` | Optimised rendering of polygon Shapefiles as a single `Renderable`. |
+| `ShapefilePolylines` | Optimised rendering of polyline Shapefiles. |
+| `ShapefileExtrudedPolygons` | Extrudes polygon footprints to 3D buildings using a height attribute. |
+| `ShapefileRenderable` | Base class for the optimised Shapefile renderables. |
+| `ShapefileUtils` | Utility methods (e.g., intersect sector, coordinate conversion). |
+
+### Reading a Shapefile
+
+```java title="Opening a Shapefile and reading records"
+Shapefile sf = new Shapefile(new File("roads.shp"));
+
+// Iterate all records
+while (sf.hasNext()) {
+    ShapefileRecord record = sf.nextRecord();
+
+    if (record instanceof ShapefileRecordPolyline) {
+        ShapefileRecordPolyline line = (ShapefileRecordPolyline) record;
+        int parts  = line.getNumberOfParts();
+        int points = line.getNumberOfPoints();
+
+        // Geometry — positions in all parts as a flat VecBufferSequence
+        VecBufferSequence geom = line.getCompoundPointBuffer();
+    }
+
+    // Attribute data via DBaseRecord
+    DBaseRecord attrs = record.getAttributes();
+    if (attrs != null) {
+        Object nameVal = attrs.getValue("NAME");    // column name
+        System.out.println("NAME = " + nameVal);
+    }
+}
+sf.close();
+```
+
+### Factory-based Layer Creation
+
+```java title="ShapefileLayerFactory — create a layer from URL"
+ShapefileLayerFactory factory = new ShapefileLayerFactory();
+
+// Asynchronous load; callback receives the created Layer
+factory.createFromShapefileSource("file:///data/admin_boundaries.shp",
+    new ShapefileLayerFactory.CompletionCallback() {
+        @Override
+        public void completion(Object result) {
+            Layer layer = (Layer) result;
+            SwingUtilities.invokeLater(() ->
+                wwd.getModel().getLayers().add(layer));
+        }
+        @Override
+        public void exception(Exception e) {
+            e.printStackTrace();
+        }
+    });
+```
+
+---
+
+## GeoJSON (`formats/geojson`)
+
+The GeoJSON package parses RFC 7946-compliant GeoJSON documents.
+
+```java title="GeoJSON — reading a document"
+GeoJSONDoc doc = new GeoJSONDoc(new File("features.geojson"));
+doc.parse();
+
+for (GeoJSONObject obj : doc.getObjects()) {
+    if (obj instanceof GeoJSONFeatureCollection) {
+        GeoJSONFeatureCollection fc = (GeoJSONFeatureCollection) obj;
+        for (GeoJSONFeature feature : fc.getFeatures()) {
+            GeoJSONGeometry geom = feature.getGeometry();
+            // geom may be GeoJSONPoint, GeoJSONLineString,
+            // GeoJSONPolygon, GeoJSONMultiPolygon, etc.
+        }
+    }
+}
+```
+
+---
+
+## GeoTIFF (`formats/tiff`)
+
+The `tiff` sub-package provides a pure-Java GeoTIFF implementation independent of GDAL.
+
+| Class | Description |
+|---|---|
+| `GeotiffReader` | Reads GeoTIFF files into `DataRaster` (implements `Disposable`). |
+| `GeotiffWriter` | Writes `BufferedImage` or elevation data as a GeoTIFF with georeferencing. |
+| `GeoTiff` | Constants and helper methods for the GeoTIFF specification. |
+| `GeotiffMetaData` | Carries parsed georeferencing metadata (projection, tie-points, pixel scale). |
+| `TIFFReader` | Low-level TIFF baseline parser. |
+
+```java title="GeotiffReader — reading imagery"
+GeotiffReader reader = new GeotiffReader(new File("imagery.tif"));
+try {
+    // Read the primary image as a BufferedImage
+    BufferedImage image = reader.read(0); // band index 0
+    // Georeferencing
+    double[] tiePoints  = reader.getMetadata().getTiePoints();
+    double[] pixelScale = reader.getMetadata().getPixelScale();
+} finally {
+    reader.close();
+}
+```
+
+```java title="GeotiffWriter — writing a georeferenced image"
+GeotiffWriter writer = new GeotiffWriter(new File("output.tif"));
+writer.write(sector,     // geographic extent
+    bufferedImage);      // image data
+writer.close();
+```
+
+---
+
+## GPX (`formats/gpx`)
+
+Reads GPS Exchange Format files (`.gpx`) for tracks, routes, and waypoints.
+
+```java title="GPX — loading tracks"
+GPXDoc gpx = new GPXDoc(new URL("file:///tracks/flight.gpx"));
+gpx.parse();
+
+for (GPXTrack track : gpx.getTracks()) {
+    for (GPXTrackSegment seg : track.getSegments()) {
+        for (GPXTrackPoint pt : seg.getPoints()) {
+            double lat  = pt.getLatitude();
+            double lon  = pt.getLongitude();
+            double ele  = pt.getElevation(); // metres
+        }
+    }
+}
+```
+
+---
+
+## NMEA (`formats/nmea`)
+
+Parses NMEA-0183 GPS sentences (e.g., from a serial GPS receiver or log file).
+
+```java title="NMEA — reading sentences from a stream"
+NMEAReader nmeaReader = new NMEAReader(new FileInputStream("gps.log"));
+NMEASentence sentence;
+while ((sentence = nmeaReader.readSentence()) != null) {
+    if (sentence instanceof GGASentence) {
+        GGASentence gga = (GGASentence) sentence;
+        double lat = gga.getLatitude();
+        double lon = gga.getLongitude();
+        double alt = gga.getAltitude();
+    }
+}
+```
+
+---
+
+## RPF — Raster Product Format (`formats/rpf`)
+
+RPF (MIL-STD-2411) encompasses CADRG topographic maps and CIB (Controlled Image Base) imagery used by military applications.
+
+Key classes:
+- `RPFTOCFile` — reads the `A.TOC` table-of-contents index file.
+- `RPFFrameFilename` — decodes an RPF frame file name.
+- `RPFRasterReader` — implements `DataRasterReader` for individual frame files.
+- `RPFGenerator` — generates a `DataRaster` mosaic from a set of RPF frames.
+
+---
+
+## VPF — Vector Product Format (`formats/vpf`)
+
+VPF (MIL-STD-600006) is the military standard for vector topographic data.
+
+Key classes:
+- `VPFDatabase` — opens a VPF database directory.
+- `VPFLibrary` — a collection of coverages within a database.
+- `VPFCoverage` — a thematic data layer (e.g., roads, hydrography).
+- `VPFFeatureClass` — features within a coverage.
+
+---
+
+## DDS (`formats/dds`)
+
+DirectDraw Surface (`.dds`) is the preferred texture format for WorldWind's tile cache because GPU-decompression (DXT1/DXT3/DXT5) reduces VRAM bandwidth.
+
+```java title="DDSCompressor — compressing a BufferedImage"
+DDSCompressor compressor = new DDSCompressor();
+ByteBuffer ddsData = compressor.compressImage(
+    bufferedImage,
+    new DXTCompressionAttributes());
+
+// Write to file
+WWIO.saveBuffer(ddsData, new File("tile.dds"));
+```
+
+---
+
+## World File (`formats/worldfile`)
+
+A world file (`.jgw`, `.pgw`, `.tfw`, etc.) georef-encodes a paired raster image file with a six-parameter affine transformation.
+
+```java title="WorldFile — reading affine georeferencing"
+File wf = new File("aerial.jgw");
+double[] params = WorldFile.decodeWorldFile(wf);
+// params[0] = pixel width, params[1] = row rotation,
+// params[2] = col rotation, params[3] = pixel height (negative),
+// params[4] = X of upper-left pixel centre,
+// params[5] = Y of upper-left pixel centre
+```

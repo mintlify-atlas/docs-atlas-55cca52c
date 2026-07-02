@@ -1,0 +1,234 @@
+---
+title: "Layer and LayerList API Reference for WorldWind Java"
+sidebarTitle: "Layers"
+description: "Reference for the Layer interface, LayerList, RenderableLayer, TiledImageLayer, and built-in layers in NASA WorldWind Java."
+---
+
+The `gov.nasa.worldwind.layers` package is the primary mechanism for adding visual content to a WorldWind globe. Every piece of imagery, elevation overlay, shape set, or annotation is managed through a layer. Layers live in the globe's `Model`, accessible via a `LayerList`, and are processed each frame by the `SceneController` in the order they appear in the list.
+
+## `Layer` Interface
+
+`Layer` extends `WWObject`, `Disposable`, and `Restorable`. It defines the contract every layer must satisfy.
+
+```java title="Layer interface — key methods"
+public interface Layer extends WWObject, Disposable, Restorable {
+
+    // Visibility and picking
+    boolean isEnabled();
+    void    setEnabled(boolean enabled);
+
+    boolean isPickEnabled();
+    void    setPickEnabled(boolean isPickable);
+
+    // Identity
+    String getName();
+    void   setName(String name);
+
+    // Transparency
+    double getOpacity();
+    void   setOpacity(double opacity);   // 0.0 = fully transparent, 1.0 = opaque
+
+    // Render lifecycle
+    void preRender(DrawContext dc);
+    void render(DrawContext dc);
+    void pick(DrawContext dc, java.awt.Point pickPoint);
+
+    // Cache expiry
+    void setExpiryTime(long expiryTime); // milliseconds since epoch
+    long getExpiryTime();
+
+    // Altitude gating
+    double getMinActiveAltitude();
+    void   setMinActiveAltitude(double minActiveAltitude);
+    double getMaxActiveAltitude();
+    void   setMaxActiveAltitude(double maxActiveAltitude);
+
+    // Multi-resolution and scale
+    boolean isAtMaxResolution();
+    boolean isMultiResolution();
+    double  getScale();
+
+    // Network retrieval
+    boolean isNetworkRetrievalEnabled();
+    void    setNetworkRetrievalEnabled(boolean networkRetrievalEnabled);
+
+    // View state
+    boolean isLayerInView(DrawContext dc);
+    boolean isLayerActive(DrawContext dc);
+    Double  getMaxEffectiveAltitude(Double radius);
+    Double  getMinEffectiveAltitude(Double radius);
+
+    // Disposable
+    void dispose();
+}
+```
+
+<Note>
+  Opacity semantics vary by layer type. `RenderableLayer` exposes the value but defers to each individual renderable's own opacity settings. Always consult the concrete layer's Javadoc for precise opacity behaviour.
+</Note>
+
+---
+
+## `LayerList`
+
+`LayerList` extends `CopyOnWriteArrayList<Layer>` and also implements `WWObject`, making it safe for concurrent reads during rendering. It is returned by `Model.getLayers()` and `WorldWindow.getModel().getLayers()`.
+
+```java title="LayerList — lookup and mutation"
+LayerList layers = wwd.getModel().getLayers();
+
+// Look up by display name
+Layer compass = layers.getLayerByName("Compass");
+
+// Look up all layers of a specific type
+List<Layer> tileLayers = layers.getLayersByClass(TiledImageLayer.class);
+
+// Thread-safe add (no-op if already present)
+boolean added = layers.addIfAbsent(myCustomLayer);
+
+// Removal
+layers.remove(myCustomLayer);
+
+// Membership test
+boolean has = layers.contains(myCustomLayer);
+
+// Display name (stored as AVKey.DISPLAY_NAME)
+layers.setDisplayName("My Scenario Layers");
+String name = layers.getDisplayName();
+```
+
+| Method | Description |
+|--------|-------------|
+| `getLayerByName(String name)` | Returns the first layer whose `getName()` equals the argument, or `null`. |
+| `getLayersByClass(Class classToFind)` | Returns all layers that are assignable to the given class. |
+| `addIfAbsent(Layer layer)` | Adds the layer only when not already in the list; returns `true` if added. |
+| `collapseLists(LayerList[] lists)` | Static utility — merges multiple `LayerList` arrays into one. |
+| `getListDifference(LayerList oldList, LayerList newList)` | Returns layers in `newList` but not `oldList`. |
+| `sort()` | Returns a copy sorted by layer name. |
+
+---
+
+## `AbstractLayer`
+
+`AbstractLayer` is the base class for nearly all concrete layers. It extends `WWObjectImpl` and provides default implementations for every `Layer` method.
+
+```java title="AbstractLayer — key state fields and methods (excerpt)"
+public abstract class AbstractLayer extends WWObjectImpl implements Layer {
+
+    // Internal state — all accessible via the Layer interface
+    private boolean enabled              = true;
+    private boolean pickable             = true;
+    private double  opacity              = 1.0d;
+    private double  minActiveAltitude    = -Double.MAX_VALUE;
+    private double  maxActiveAltitude    =  Double.MAX_VALUE;
+    private boolean networkDownloadEnabled = true;
+    private long    expiryTime           = 0;
+}
+```
+
+`AbstractLayer` routes message delivery: it implements `MessageListener` and forwards `Message` objects to each `Renderable` in the layer that itself implements `MessageListener`. Subclasses override `doRender(DrawContext)`, `doPick(DrawContext, Point)`, and (optionally) `doPreRender(DrawContext)` rather than the public lifecycle methods.
+
+---
+
+## `RenderableLayer`
+
+`RenderableLayer` manages a `ConcurrentLinkedQueue<Renderable>` of renderable objects. It is the go-to layer for adding custom shapes, placemarks, or any `Renderable` to the scene.
+
+```java title="RenderableLayer — adding and removing renderables"
+RenderableLayer layer = new RenderableLayer();
+layer.setName("My Features");
+
+// Add individual renderables
+layer.addRenderable(myPath);
+layer.addRenderable(myPolygon);
+
+// Insert at a specific position
+layer.addRenderable(0, highPriorityShape);
+
+// Bulk add from any Iterable
+layer.addRenderables(shapeList);
+
+// Remove one or all
+layer.removeRenderable(myPath);
+layer.removeAllRenderables();
+
+// Query
+int count = layer.getNumRenderables();
+Iterable<Renderable> all = layer.getRenderables();
+
+// Override with a custom Iterable (disables internal list management)
+layer.setRenderables(myExternalIterable);
+
+// Dispose all Disposable renderables held by the layer
+layer.dispose();
+
+wwd.getModel().getLayers().add(layer);
+```
+
+<Tip>
+  If a `Renderable` also implements `AVList`, `RenderableLayer` automatically attaches itself as a `PropertyChangeListener` so that property-change events (e.g., position updates) propagate to the `SceneController` and trigger a redraw.
+</Tip>
+
+---
+
+## `TiledImageLayer`
+
+`TiledImageLayer` is the abstract base for all tile-based imagery layers, including WMS layers and locally cached tile pyramids. It maintains a `LevelSet` that describes the tile pyramid and downloads or loads tiles based on current eye distance.
+
+```java title="TiledImageLayer — key configuration"
+// Concrete subclasses are constructed via AVList params or XML config
+// Example: subclass constructor
+public class MyImageLayer extends TiledImageLayer {
+    public MyImageLayer(AVList params) {
+        super(new LevelSet(params));
+    }
+}
+
+// Configure detail level bias (-0.5 = lower res, +0.5 = higher res)
+myLayer.setDetailHint(0.3);
+double hint = myLayer.getDetailHint(); // default origin is 2.8
+
+// Transparent pixel handling (e.g., for PNG layers)
+myLayer.setUseTransparentTextures(true);
+
+// MIP-mapping (smooth minification)
+// (field useMipMaps is protected; set via subclass or constructor params)
+```
+
+| Field / Method | Default | Description |
+|---|---|---|
+| `setDetailHint(double)` | `0` | Biases tile selection; positive = finer detail at same altitude. |
+| `setUseTransparentTextures(boolean)` | `false` | Enables alpha channel blending for transparent tiles. |
+| `useMipMaps` (protected field) | `true` | Enables OpenGL mip-mapping for distant tiles. |
+| `forceLevelZeroLoads` (protected field) | `false` | Forces the coarsest tile level to load before higher-res tiles. |
+| `retainLevelZeroTiles` (protected field) | `false` | Keeps level-zero tiles in memory permanently. |
+
+---
+
+## Built-in Layers
+
+WorldWind ships with a set of ready-made layers you can add directly from `gov.nasa.worldwind.layers`.
+
+| Layer Class | Description |
+|---|---|
+| `CompassLayer` | Renders a compass rose in a screen corner. |
+| `ScalebarLayer` | Draws a distance scale bar calibrated to the current view. |
+| `WorldMapLayer` | Miniature world map showing current view position. |
+| `SkyGradientLayer` | Atmospheric sky gradient rendered as a dome. |
+| `StarsLayer` | Starfield rendered outside the atmosphere. |
+| `LatLonGraticuleLayer` | Latitude/longitude graticule grid lines with labels. |
+| `GARSGraticuleLayer` | GARS (Global Area Reference System) grid overlay. |
+| `PlaceNameLayer` | Country, city, and geographic feature place name labels. |
+| `SurfaceImageLayer` | Renders geo-referenced raster images draped on the terrain. |
+| `ViewControlsLayer` | On-screen pan/zoom/tilt controls for mouse-free navigation. |
+
+```java title="Adding built-in layers to the model"
+LayerList layers = wwd.getModel().getLayers();
+
+layers.add(new CompassLayer());
+layers.add(new ScalebarLayer());
+layers.add(new StarsLayer());
+
+LatLonGraticuleLayer graticule = new LatLonGraticuleLayer();
+graticule.setOpacity(0.6);
+layers.add(graticule);
+```

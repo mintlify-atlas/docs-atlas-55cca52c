@@ -1,0 +1,361 @@
+---
+title: "WorldWindow Interface: Rendering Surface and Event Hub"
+sidebarTitle: "WorldWindow"
+description: "WorldWindow is the top-level interface for all WorldWind rendering windows, providing model/view access, redraw control, event listeners, and GPU resource cache management."
+---
+
+`WorldWindow` is the top-level interface that every WorldWind rendering surface implements. It binds together a `Model` (globe + layers), a `View` (camera), a `SceneController` (render loop), an `InputHandler` (mouse/keyboard routing), and a set of event-listener registries into a single object that an application can embed in its UI hierarchy. All rendering, picking, and event dispatch flows through a `WorldWindow`. The interface extends `AVList` so that arbitrary key-value metadata can be attached to any window instance.
+
+**Package:** `gov.nasa.worldwind`
+**Interface:** `public interface WorldWindow extends AVList`
+
+---
+
+## Implementations
+
+WorldWind ships two ready-to-use concrete implementations, both located in `gov.nasa.worldwind.awt`.
+
+### WorldWindowGLCanvas
+
+```java title="WorldWindowGLCanvas — heavyweight AWT component"
+package gov.nasa.worldwind.awt;
+
+public class WorldWindowGLCanvas extends GLCanvas
+    implements WorldWindow, PropertyChangeListener
+```
+
+`WorldWindowGLCanvas` is a **heavyweight** AWT component backed by JOGL's `GLCanvas`. Because it is a native peer component it has the best and most consistent performance across platforms and is the recommended choice for most applications. It can be mixed with lightweight Swing components provided the standard Swing light/heavyweight workarounds are applied (disable lightweight pop-ups via `ToolTipManager.setLightWeightPopupEnabled(false)` etc.).
+
+It is stereo-capable: set the JVM property `gov.nasa.worldwind.stereo.mode=device` before constructing the canvas to request a stereo-capable OpenGL context; pair this with a `StereoSceneController` in `worldwind.xml`.
+
+### WorldWindowGLJPanel
+
+```java title="WorldWindowGLJPanel — lightweight Swing component"
+package gov.nasa.worldwind.awt;
+
+public class WorldWindowGLJPanel extends GLJPanel
+    implements WorldWindow, PropertyChangeListener
+```
+
+`WorldWindowGLJPanel` is a **lightweight** Swing panel backed by JOGL's `GLJPanel`. It allows the WorldWind globe to participate in z-ordering with other Swing components (translucent panels, overlays, etc.) without the airspace clipping problems that heavyweight components impose. The trade-off is historically lower and less predictable rendering performance. Use it only when Swing z-order integration is essential.
+
+<Warning>
+  JOGL's `GLJPanel` implementation has had known stability and performance issues on some hardware/driver combinations. Prefer `WorldWindowGLCanvas` whenever possible.
+</Warning>
+
+---
+
+## Model and View
+
+### setModel / getModel
+
+```java title="Model access"
+void setModel(Model model)
+Model getModel()
+```
+
+Attaches or detaches a `Model` (the globe plus its layer list) to this window. Passing `null` disassociates any current model. The scene controller is notified automatically.
+
+<ParamField path="model" type="Model">
+  The model to display. May be `null` to detach the current model.
+</ParamField>
+
+---
+
+### setView / getView
+
+```java title="View access"
+void setView(View view)
+View getView()
+```
+
+Attaches or detaches the `View` (camera) used to render this window's model. Passing `null` disassociates the current view.
+
+<ParamField path="view" type="View">
+  The view to use. May be `null` to detach the current view.
+</ParamField>
+
+---
+
+### setModelAndView
+
+```java title="Atomic model and view assignment"
+void setModelAndView(Model model, View view)
+```
+
+Convenience method that atomically sets both the model and the view in a single call. Either argument may be `null`.
+
+<ParamField path="model" type="Model">
+  The model to display. May be `null`.
+</ParamField>
+
+<ParamField path="view" type="View">
+  The view to use. May be `null`.
+</ParamField>
+
+---
+
+### getSceneController / setSceneController
+
+```java title="SceneController access"
+SceneController getSceneController()
+void setSceneController(SceneController sceneController)
+```
+
+Gets or replaces the `SceneController` that drives the render and pick loops for this window. When replacing the scene controller the caller is responsible for populating the new instance with a `View`, `Model`, and any desired per-frame statistics keys before passing it in.
+
+<ParamField path="sceneController" type="SceneController">
+  The new scene controller. The caller must configure its view and model before attaching it.
+</ParamField>
+
+**Returns:** `SceneController` — the current scene controller, or `null` if none is associated.
+
+---
+
+## Rendering
+
+### redraw
+
+```java title="Asynchronous repaint request"
+void redraw()
+```
+
+Enqueues a repaint event with the window system. The actual repaint occurs on the window system's event-dispatch thread at the toolkit's discretion. This is the **preferred** way to trigger a new frame because it coalesces multiple requests and integrates naturally with the AWT/Swing event queue. In `WorldWindowGLCanvas` this delegates to `Component.repaint()`.
+
+---
+
+### redrawNow
+
+```java title="Synchronous immediate repaint"
+void redrawNow()
+```
+
+Forces an **immediate** repaint without waiting for the window system event queue. Use this only in the rare cases where synchronous rendering is unavoidable (e.g., screen-capture utilities). Under normal circumstances, prefer `redraw()`.
+
+---
+
+### getGpuResourceCache
+
+```java title="GPU resource cache"
+GpuResourceCache getGpuResourceCache()
+```
+
+Returns the `GpuResourceCache` that manages all GPU-resident resources (textures, VBOs, display lists) allocated for this window's OpenGL context. This method is primarily for use by custom shapes and layers that manage their own GPU objects. Applications should not clear or modify the cache directly.
+
+**Returns:** `GpuResourceCache`
+
+<Warning>
+  Do not clear or modify the `GpuResourceCache` directly from application code. Doing so will cause excessive memory usage or application crashes. Access GPU resources only through the `DrawContext` during rendering.
+</Warning>
+
+---
+
+## Event Listeners
+
+### Select Listeners
+
+```java title="Select listener registration"
+void addSelectListener(SelectListener listener)
+void removeSelectListener(SelectListener listener)
+```
+
+Select listeners receive `SelectEvent` notifications whenever the user performs an operation that identifies a visible object — a left-click, right-click, hover, drag, or box-select. The event carries the `PickedObjectList` of all objects under the cursor at the time of the event.
+
+<ParamField path="listener" type="SelectListener">
+  The listener to add or remove.
+</ParamField>
+
+---
+
+### Position Listeners
+
+```java title="Position listener registration"
+void addPositionListener(PositionListener listener)
+void removePositionListener(PositionListener listener)
+```
+
+Position listeners are called each time the cursor's geographic position changes. The event reports the current `Position` (latitude, longitude, altitude) under the cursor, or `null` if the cursor is not over the globe.
+
+<ParamField path="listener" type="PositionListener">
+  The listener to add or remove.
+</ParamField>
+
+---
+
+### Rendering Listeners
+
+```java title="Rendering listener registration"
+void addRenderingListener(RenderingListener listener)
+void removeRenderingListener(RenderingListener listener)
+```
+
+Rendering listeners are notified at key stages of the WorldWind draw cycle (before/after render, before/after pick). They allow applications to inject custom OpenGL rendering or monitor frame progress.
+
+<ParamField path="listener" type="RenderingListener">
+  The listener to add or remove.
+</ParamField>
+
+---
+
+### Rendering Exception Listeners
+
+```java title="Rendering exception listener registration"
+void addRenderingExceptionListener(RenderingExceptionListener listener)
+void removeRenderingExceptionListener(RenderingExceptionListener listener)
+```
+
+Rendering exception listeners are called when an unrecovered exception or critical error occurs during drawable initialisation or the render loop. Use these to display user-facing error messages or initiate graceful degradation.
+
+<ParamField path="listener" type="RenderingExceptionListener">
+  The listener to add or remove.
+</ParamField>
+
+---
+
+## Input Handler
+
+```java title="Input handler access"
+InputHandler getInputHandler()
+void setInputHandler(InputHandler inputHandler)
+```
+
+The `InputHandler` translates AWT mouse and keyboard events into WorldWind `SelectEvent`s and view-manipulation gestures. The default implementation installed by both concrete window classes is `AWTInputHandler`, configured via `AVKey.INPUT_HANDLER_CLASS_NAME` in `worldwind.xml`. Pass `null` to `setInputHandler` to detach the current handler (a no-op handler is installed internally so the window remains functional).
+
+<ParamField path="inputHandler" type="InputHandler">
+  The input handler to use. Pass `null` to detach the current handler.
+</ParamField>
+
+---
+
+## Performance
+
+### getPerFrameStatistics
+
+```java title="Per-frame statistics"
+Collection<PerformanceStatistic> getPerFrameStatistics()
+```
+
+Returns the active per-frame performance statistics measured during the most recently completed frame, such as tile-draw counts, render time breakdowns, and pick pass timing. Only statistics whose keys have been activated via `setPerFrameStatisticsKeys` are populated.
+
+**Returns:** `Collection<PerformanceStatistic>`
+
+---
+
+### setPerFrameStatisticsKeys
+
+```java title="Activating statistics"
+void setPerFrameStatisticsKeys(Set<String> keys)
+```
+
+Specifies which performance metrics WorldWind should measure each frame. Keys are defined as constants on `PerformanceStatistic` (e.g., `PerformanceStatistic.FRAME_RATE`). Passing an empty set disables all per-frame measurement. The activated set is forwarded to the `SceneController`.
+
+<ParamField path="keys" type="Set&lt;String&gt;">
+  The set of statistic keys to activate. Use `PerformanceStatistic` constant strings.
+</ParamField>
+
+---
+
+## WorldWindowGLCanvas Constructors
+
+`WorldWindowGLCanvas` provides four constructors to cover the most common deployment scenarios.
+
+```java title="Default constructor — single window on the default graphics device"
+public WorldWindowGLCanvas()
+```
+
+Creates a new canvas on the default `GraphicsDevice` using WorldWind's required `GLCapabilities`. A default `View` and `AWTInputHandler` are constructed and attached automatically.
+
+---
+
+```java title="Shared-context constructor"
+public WorldWindowGLCanvas(WorldWindow shareWith)
+```
+
+Creates a new canvas that shares the `GpuResourceCache` (and underlying OpenGL context) with an existing `WorldWindow`. Use this when displaying multiple synchronized views of the same scene so that textures and geometry are not duplicated in GPU memory.
+
+<ParamField path="shareWith" type="WorldWindow">
+  An existing `WorldWindow` whose GPU resources should be shared. May be `null` for an independent context.
+</ParamField>
+
+---
+
+```java title="Device-specific constructor"
+public WorldWindowGLCanvas(WorldWindow shareWith, java.awt.GraphicsDevice device)
+```
+
+Creates a canvas on a specific `GraphicsDevice` (useful for multi-monitor setups) with optional GPU resource sharing.
+
+<ParamField path="shareWith" type="WorldWindow">
+  An existing `WorldWindow` to share resources with. May be `null`.
+</ParamField>
+
+<ParamField path="device" type="GraphicsDevice">
+  The target graphics device. Pass `null` to use the default screen device.
+</ParamField>
+
+---
+
+```java title="Full-control constructor"
+public WorldWindowGLCanvas(WorldWindow shareWith, java.awt.GraphicsDevice device,
+    GLCapabilities capabilities, GLCapabilitiesChooser chooser)
+```
+
+Full-control constructor for applications that need to specify a custom `GLCapabilities` profile or `GLCapabilitiesChooser`.
+
+<ParamField path="shareWith" type="WorldWindow">
+  Resource-sharing partner. May be `null`.
+</ParamField>
+<ParamField path="device" type="GraphicsDevice">
+  Target display device. May be `null`.
+</ParamField>
+<ParamField path="capabilities" type="GLCapabilities">
+  Custom OpenGL capabilities. May be `null` to use WorldWind defaults.
+</ParamField>
+<ParamField path="chooser" type="GLCapabilitiesChooser">
+  Custom capabilities chooser. May be `null` to use the default `BasicGLCapabilitiesChooser`.
+</ParamField>
+
+---
+
+## Code Example
+
+The following example creates a basic application window with a `WorldWindowGLCanvas` embedded in a Swing frame and registers a `SelectListener` to print the name of any picked object.
+
+```java title="Creating a WorldWindowGLCanvas with a SelectListener"
+import gov.nasa.worldwind.*;
+import gov.nasa.worldwind.awt.WorldWindowGLCanvas;
+import gov.nasa.worldwind.event.*;
+
+import javax.swing.*;
+
+public class SimpleWorldWindApp {
+
+    public static void main(String[] args) {
+        // Workaround for Swing/AWT mixing
+        javax.swing.ToolTipManager.sharedInstance().setLightWeightPopupEnabled(false);
+        javax.swing.JPopupMenu.setDefaultLightWeightPopupEnabled(false);
+
+        SwingUtilities.invokeLater(() -> {
+            // Create the WorldWindow canvas with default model and view
+            WorldWindowGLCanvas wwd = new WorldWindowGLCanvas();
+            wwd.setPreferredSize(new java.awt.Dimension(1200, 800));
+
+            // Attach a default model (WGS84 Earth + default layer set)
+            wwd.setModel(new BasicModel());
+
+            // Register a select listener to react to user picks
+            wwd.addSelectListener(event -> {
+                if (event.getTopObject() != null) {
+                    System.out.println("Picked: " + event.getTopObject());
+                }
+            });
+
+            JFrame frame = new JFrame("WorldWind");
+            frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+            frame.getContentPane().add(wwd, java.awt.BorderLayout.CENTER);
+            frame.pack();
+            frame.setVisible(true);
+        });
+    }
+}
+```

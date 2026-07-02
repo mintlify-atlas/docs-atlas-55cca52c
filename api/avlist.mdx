@@ -1,0 +1,257 @@
+---
+title: "AVList and AVKey: Attribute-Value Configuration System"
+sidebarTitle: "AVList & AVKey"
+description: "Reference for the WorldWind Java AVList interface and AVKey constants used for flexible attribute-value configuration throughout the SDK."
+---
+
+WorldWind uses an attribute-value system — embodied in the `AVList` interface and the `AVKey` constants interface — as a universal configuration and communication mechanism. Nearly every major object in the SDK implements `AVList`, making it possible to pass construction parameters, share state, and propagate property-change events without static typed APIs. `AVListImpl` is the standalone implementation, while `WWObjectImpl` extends it to add full `WWObject` semantics including `PropertyChangeEvent` broadcasting.
+
+---
+
+## `AVList` Interface
+
+`AVList` is a key/value store backed by a `Map<String, Object>`. Keys are string constants (defined in `AVKey`) and values are arbitrary `Object` instances.
+
+```java title="AVList interface — complete contract"
+public interface AVList {
+
+    // ---- Core key/value operations ----
+
+    // Store a value; returns the previous value (or null)
+    Object setValue(String key, Object value);
+
+    // Bulk copy from another AVList
+    AVList setValues(AVList avList);
+
+    // Retrieve a value by key (returns null if absent)
+    Object getValue(String key);
+
+    // Type-checked String retrieval (throws WWRuntimeException if not a String)
+    String getStringValue(String key);
+
+    // All values in the collection
+    Collection<Object> getValues();
+
+    // All key/value pairs as a Set
+    Set<Map.Entry<String, Object>> getEntries();
+
+    // Membership test
+    boolean hasKey(String key);
+
+    // Remove a key; returns previous value
+    Object removeKey(String key);
+
+    // Shallow copy of the entire list
+    AVList copy();
+
+    // Clear all entries
+    AVList clearList();
+
+    // ---- Property change listeners ----
+
+    // Listen for changes to a specific key
+    void addPropertyChangeListener(String propertyName,
+        java.beans.PropertyChangeListener listener);
+    void removePropertyChangeListener(String propertyName,
+        java.beans.PropertyChangeListener listener);
+
+    // Listen for all changes
+    void addPropertyChangeListener(java.beans.PropertyChangeListener listener);
+    void removePropertyChangeListener(java.beans.PropertyChangeListener listener);
+
+    // Fire a change event for a key
+    void firePropertyChange(String propertyName, Object oldValue, Object newValue);
+    void firePropertyChange(java.beans.PropertyChangeEvent propertyChangeEvent);
+}
+```
+
+### `AVListImpl`
+
+`AVListImpl` is the standalone implementation used when an object needs `AVList` behaviour but doesn't extend any WorldWind base class.
+
+```java title="AVListImpl — standalone usage"
+AVList params = new AVListImpl();
+
+params.setValue(AVKey.DATASET_NAME,    "Blue Marble");
+params.setValue(AVKey.FORMAT_SUFFIX,   ".dds");
+params.setValue(AVKey.NUM_LEVELS,      14);
+params.setValue(AVKey.TILE_WIDTH,      512);
+params.setValue(AVKey.TILE_HEIGHT,     512);
+
+// Read back values
+String name    = (String)  params.getValue(AVKey.DATASET_NAME);
+Integer levels = (Integer) params.getValue(AVKey.NUM_LEVELS);
+
+// Null-safe typed retrieval
+String display = params.getStringValue(AVKey.DISPLAY_NAME);  // null if absent
+
+// Check and remove
+if (params.hasKey(AVKey.FORMAT_SUFFIX)) {
+    params.removeKey(AVKey.FORMAT_SUFFIX);
+}
+
+// Shallow copy
+AVList copy = params.copy();
+```
+
+---
+
+## `WWObject` / `WWObjectImpl`
+
+`WWObjectImpl` extends `AVListImpl` and additionally implements `WWObject`. It is the common base class for layers, shapes, globes, views, and all other major SDK objects.
+
+```java title="WWObjectImpl — property change broadcasting"
+public class WWObjectImpl extends AVListImpl implements WWObject {
+
+    // Fires a named property change to all registered listeners
+    // who listen for propertyName or all-property listeners
+    @Override
+    public void firePropertyChange(String propertyName,
+                                   Object oldValue,
+                                   Object newValue) {
+        super.firePropertyChange(propertyName, oldValue, newValue);
+    }
+}
+```
+
+Any object extending `WWObjectImpl` can broadcast state changes, and interested parties can subscribe:
+
+```java title="Listening for property changes on a Layer"
+Layer layer = new RenderableLayer();
+
+layer.addPropertyChangeListener(AVKey.DISPLAY_NAME, event -> {
+    System.out.println("Name changed: " + event.getNewValue());
+});
+
+// Trigger the listener
+layer.setName("Updated Name");
+// → "Name changed: Updated Name"
+```
+
+---
+
+## `AVKey` Constants
+
+`AVKey` is an interface containing string constants grouped by functional area. All constants follow the reverse-domain naming pattern `"gov.nasa.worldwind.avkey.*"`. Use these constants as keys with any `AVList`.
+
+### Layer Configuration
+
+| Constant | String Value | Description |
+|---|---|---|
+| `LAYER_NAMES` | `"gov.nasa.worldwind.avkey.LayerNames"` | Comma-separated WMS/WCS layer identifiers. |
+| `DISPLAY_NAME` | `"gov.nasa.worldwind.avkey.DisplayName"` | Human-readable layer or object name. |
+| `OPACITY` | `"gov.nasa.worldwind.avkey.Opacity"` | Layer/shape opacity (0–1). |
+| `DESCRIPTION` | `"gov.nasa.worldwind.avkey.Description"` | Descriptive text for a layer or dataset. |
+
+### Service
+
+| Constant | String Value | Description |
+|---|---|---|
+| `SERVICE` | `"gov.nasa.worldwind.avkey.ServiceURLKey"` | Base service URL. |
+| `SERVICE_NAME` | `"gov.nasa.worldwind.avkey.ServiceName"` | Service type identifier (e.g., `"OGC:WMS"`). |
+| `GET_MAP_URL` | `"gov.nasa.worldwind.avkey.GetMapURL"` | WMS GetMap endpoint URL. |
+| `GET_CAPABILITIES_URL` | `"gov.nasa.worldwind.avkey.GetCapabilitiesURL"` | WMS GetCapabilities endpoint URL. |
+| `GET_COVERAGE_URL` | `"gov.nasa.worldwind.avkey.GetCoverageURL"` | WCS GetCoverage endpoint URL. |
+
+### Tile Pyramid Parameters
+
+| Constant | String Value | Description |
+|---|---|---|
+| `DATASET_NAME` | `"gov.nasa.worldwind.avkey.DatasetNameKey"` | Cache dataset directory name. |
+| `FORMAT_SUFFIX` | `"gov.nasa.worldwind.avkey.FormatSuffixKey"` | Tile file extension (e.g., `".dds"`). |
+| `NUM_LEVELS` | `"gov.nasa.worldwind.avkey.NumLevels"` | Total number of tile pyramid levels. |
+| `NUM_EMPTY_LEVELS` | `"gov.nasa.worldwind.avkey.NumEmptyLevels"` | Number of empty (placeholder) levels at the bottom of the pyramid. |
+| `LEVEL_ZERO_TILE_DELTA` | `"gov.nasa.worldwind.avkey.LevelZeroTileDelta"` | Angular size of a level-0 tile as a `LatLon`. |
+| `TILE_HEIGHT` | `"gov.nasa.worldwind.avkey.TileHeightKey"` | Tile pixel height. |
+| `TILE_WIDTH` | `"gov.nasa.worldwind.avkey.TileWidthKey"` | Tile pixel width. |
+| `IMAGE_FORMAT` | `"gov.nasa.worldwind.avkey.ImageFormat"` | MIME type for tile requests (e.g., `"image/png"`). |
+| `DATA_CACHE_NAME` | `"gov.nasa.worldwind.avkey.DataCacheNameKey"` | Relative path within the WorldWind file store. |
+
+### Geography
+
+| Constant | String Value | Description |
+|---|---|---|
+| `SECTOR` | `"gov.nasa.worldwind.avKey.Sector"` | Bounding `Sector` (lat/lon rectangle). |
+| `SECTOR_RESOLUTION_LIMITS` | `"gov.nasa.worldwind.avkey.SectorResolutionLimits"` | Array of `SectorResolutionLimit` objects. |
+
+### Data
+
+| Constant | String Value | Description |
+|---|---|---|
+| `DATA_TYPE` | `"gov.nasa.worldwind.avkey.DataType"` | Primitive type: `INT8`, `INT16`, `FLOAT32`, etc. |
+| `BYTE_ORDER` | `"gov.nasa.worldwind.avkey.ByteOrder"` | `BIG_ENDIAN` or `LITTLE_ENDIAN`. |
+| `MISSING_DATA_SIGNAL` | `"gov.nasa.worldwind.avkey.MissingDataFlag"` | Sentinel value indicating no-data pixels. |
+| `MISSING_DATA_REPLACEMENT` | `"gov.nasa.worldwind.avkey.MissingDataValue"` | Value substituted for missing data during rendering. |
+
+### Display and Identity
+
+| Constant | String Value | Description |
+|---|---|---|
+| `DISPLAY_NAME` | `"gov.nasa.worldwind.avkey.DisplayName"` | UI-facing label. |
+| `DESCRIPTION` | `"gov.nasa.worldwind.avkey.Description"` | Long-form description text. |
+| `IMAGE_FORMAT` | `"gov.nasa.worldwind.avkey.ImageFormat"` | Requested image MIME type. |
+
+### System / Factory
+
+| Constant | String Value | Description |
+|---|---|---|
+| `DATA_FILE_STORE_CLASS_NAME` | `"gov.nasa.worldwind.avkey.DataFileStoreClassName"` | Implementation class for the file store. |
+| `RETRIEVAL_SERVICE_CLASS_NAME` | `"gov.nasa.worldwind.avkey.RetrievalServiceClassName"` | Implementation class for the HTTP retrieval service. |
+| `TASK_SERVICE_CLASS_NAME` | `"gov.nasa.worldwind.avkey.TaskServiceClassName"` | Implementation class for the background task scheduler. |
+| `MODEL_CLASS_NAME` | `"gov.nasa.worldwind.avkey.ModelClassName"` | Implementation class for the `Model`. |
+
+### Path Types
+
+| Constant | String Value | Description |
+|---|---|---|
+| `GREAT_CIRCLE` | `"gov.nasa.worldwind.avkey.GreatCircle"` | Great-circle arc interpolation. |
+| `RHUMB_LINE` | (see `AVKey.RHUMB_LINE`) | Rhumb-line (constant bearing) interpolation. |
+| `LINEAR` | (see `AVKey.LINEAR`) | Straight Cartesian interpolation. |
+
+---
+
+## Complete Example: AVList for Tile Configuration
+
+```java title="Building a tile pyramid configuration with AVList"
+import gov.nasa.worldwind.avlist.*;
+import gov.nasa.worldwind.geom.*;
+
+// Create parameter list for a custom TiledImageLayer subclass
+AVList params = new AVListImpl();
+
+// Service endpoint
+params.setValue(AVKey.SERVICE,
+    "https://tiles.example.com/imagery");
+params.setValue(AVKey.SERVICE_NAME,  "OGC:WMS");
+params.setValue(AVKey.LAYER_NAMES,   "base_imagery");
+params.setValue(AVKey.IMAGE_FORMAT,  "image/png");
+
+// Tile pyramid structure
+params.setValue(AVKey.DATASET_NAME,    "ExampleImagery");
+params.setValue(AVKey.DATA_CACHE_NAME, "Earth/ExampleImagery");
+params.setValue(AVKey.FORMAT_SUFFIX,   ".dds");
+params.setValue(AVKey.NUM_LEVELS,      14);
+params.setValue(AVKey.NUM_EMPTY_LEVELS, 0);
+params.setValue(AVKey.TILE_WIDTH,      512);
+params.setValue(AVKey.TILE_HEIGHT,     512);
+params.setValue(AVKey.LEVEL_ZERO_TILE_DELTA,
+    new LatLon(Angle.fromDegrees(36d), Angle.fromDegrees(36d)));
+params.setValue(AVKey.SECTOR, Sector.FULL_SPHERE);
+
+// Data properties
+params.setValue(AVKey.DISPLAY_NAME,  "Example Imagery");
+params.setValue(AVKey.DESCRIPTION,   "High-resolution base imagery layer");
+
+// Listen for changes (e.g., to re-initialize on config reload)
+params.addPropertyChangeListener(AVKey.SERVICE, event -> {
+    System.out.println("Service URL changed: " + event.getNewValue());
+});
+
+// Pass to a layer constructor
+WMSTiledImageLayer layer = new WMSTiledImageLayer(params);
+wwd.getModel().getLayers().add(layer);
+```
+
+<Note>
+  Because `AVList` stores `Object` values, always cast the return of `getValue()` to the expected type. Use `getStringValue()` for `String`-typed entries — it throws `WWRuntimeException` if the value exists but is not a `String`, making type errors easier to diagnose.
+</Note>

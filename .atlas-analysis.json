@@ -1,0 +1,159 @@
+{
+  "projectType": "sdk-library",
+  "projectName": "NASA WorldWind Java",
+  "projectDescription": "A Java SDK for building cross-platform 3D geospatial desktop applications, providing an interactive virtual globe with high-resolution terrain, imagery layers, and rich geospatial data visualization using OpenGL.",
+  "theme": "maple",
+  "primaryColor": "#113f95",
+  "lightColor": "#7d3c5c",
+  "darkColor": "#e0706b",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/worldwindow",
+              "concepts/model-view",
+              "concepts/layers",
+              "concepts/globe-terrain"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/rendering-shapes",
+              "guides/imagery-elevation",
+              "guides/kml-collada",
+              "guides/wms-ogc",
+              "guides/symbology",
+              "guides/data-import",
+              "guides/camera-navigation",
+              "guides/events-picking"
+            ]
+          },
+          {
+            "group": "Configuration & Deployment",
+            "pages": [
+              "configuration/configuration-api",
+              "configuration/caching",
+              "configuration/jogl-deployment"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Core",
+            "pages": [
+              "api/worldwind",
+              "api/worldwindow",
+              "api/model-scenecontroller"
+            ]
+          },
+          {
+            "group": "Geometry & Globe",
+            "pages": [
+              "api/geom",
+              "api/globes",
+              "api/terrain"
+            ]
+          },
+          {
+            "group": "Layers & Rendering",
+            "pages": [
+              "api/layers",
+              "api/render",
+              "api/airspaces"
+            ]
+          },
+          {
+            "group": "Data & Formats",
+            "pages": [
+              "api/data-raster",
+              "api/formats",
+              "api/ogc"
+            ]
+          },
+          {
+            "group": "Symbology & Utilities",
+            "pages": [
+              "api/symbology",
+              "api/util",
+              "api/avlist"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Interactive 3D virtual globe rendering with OpenGL via JOGL",
+    "High-resolution terrain using elevation models (DTED, BIL, GeoTIFF, WCS)",
+    "Tiled imagery layer system with WMS, WCS, and local raster sources",
+    "Rich shape and renderable library (polygons, paths, extruded shapes, airspaces, surface shapes)",
+    "KML/KMZ parsing and rendering support",
+    "OGC standards support (WMS, WCS, WFS, KML, COLLADA, GML)",
+    "MIL-STD-2525 and MIL-STD-1477 tactical symbology",
+    "Geospatial data import (Shapefile, GeoJSON, DTED, RPF, VPF, GeoTIFF, GDAL)",
+    "Flexible layer architecture with built-in layers (stars, compass, placenames, graticule)",
+    "Camera/view system with orbit and first-person controllers",
+    "Picking and selection event system for interactive objects",
+    "Caching system for GPU resources, memory, and file stores",
+    "Cross-platform support: Windows, macOS, Linux",
+    "Swing/AWT integration via WorldWindowGLCanvas and WorldWindowGLJPanel"
+  ],
+  "publicApiSurface": [
+    "gov.nasa.worldwind.WorldWind — singleton entry point for SDK services and configuration",
+    "gov.nasa.worldwind.WorldWindow — top-level interface for all WorldWind render windows",
+    "gov.nasa.worldwind.awt.WorldWindowGLCanvas — AWT/Swing-compatible OpenGL canvas",
+    "gov.nasa.worldwind.awt.WorldWindowGLJPanel — Swing JPanel-compatible OpenGL canvas",
+    "gov.nasa.worldwind.BasicModel — default model combining globe + layer list",
+    "gov.nasa.worldwind.Model — interface for globe + layer list composition",
+    "gov.nasa.worldwind.View — interface for controlling the camera/viewpoint",
+    "gov.nasa.worldwind.Configuration — static SDK configuration API",
+    "gov.nasa.worldwind.layers.Layer — base interface for all layers",
+    "gov.nasa.worldwind.layers.RenderableLayer — generic layer for adding renderables",
+    "gov.nasa.worldwind.layers.TiledImageLayer — tiled imagery layer base class",
+    "gov.nasa.worldwind.layers.BasicTiledImageLayer — concrete tiled imagery layer",
+    "gov.nasa.worldwind.render.Renderable — base interface for all renderable objects",
+    "gov.nasa.worldwind.render.Path — polyline shape rendered on the globe",
+    "gov.nasa.worldwind.render.SurfacePolygon — 2D polygon draped on the terrain",
+    "gov.nasa.worldwind.render.SurfacePolyline — 2D polyline draped on the terrain",
+    "gov.nasa.worldwind.render.Polygon — 3D polygon shape",
+    "gov.nasa.worldwind.render.ExtrudedPolygon — 3D extruded polygon building shape",
+    "gov.nasa.worldwind.render.PointPlacemark — geographic point marker with icon",
+    "gov.nasa.worldwind.render.Annotation — text annotation attached to a geographic position",
+    "gov.nasa.worldwind.render.airspaces.Airspace — base interface for airspace volumes",
+    "gov.nasa.worldwind.geom.LatLon — immutable lat/lon position",
+    "gov.nasa.worldwind.geom.Position — lat/lon with altitude",
+    "gov.nasa.worldwind.geom.Sector — bounding box defined by lat/lon ranges",
+    "gov.nasa.worldwind.geom.Angle — angular measurement utility",
+    "gov.nasa.worldwind.globes.Globe — interface for globe geometry and elevation",
+    "gov.nasa.worldwind.globes.Earth — WGS84 Earth globe",
+    "gov.nasa.worldwind.globes.EllipsoidalGlobe — base class for ellipsoidal globes",
+    "gov.nasa.worldwind.terrain.ElevationModel — interface for terrain elevation data",
+    "gov.nasa.worldwind.terrain.CompoundElevationModel — composite elevation model",
+    "gov.nasa.worldwind.terrain.HighResolutionTerrain — high-accuracy terrain intersection",
+    "gov.nasa.worldwind.ogc.kml.KMLRoot — entry point for loading KML/KMZ files",
+    "gov.nasa.worldwind.symbology.TacticalSymbol — interface for MIL-STD tactical symbols",
+    "gov.nasa.worldwind.symbology.TacticalGraphic — interface for MIL-STD tactical graphics",
+    "gov.nasa.worldwind.symbology.milstd2525.MilStd2525TacticalSymbol — MIL-STD-2525 symbol",
+    "gov.nasa.worldwind.data.DataRasterReader — interface for reading raster data",
+    "gov.nasa.worldwind.formats.shapefile.ShapefileLayerFactory — loads ESRI shapefiles",
+    "gov.nasa.worldwind.avlist.AVKey — attribute-value key constants",
+    "gov.nasa.worldwind.event.SelectListener — interface for object selection events",
+    "gov.nasa.worldwind.Version — SDK version information"
+  ]
+}

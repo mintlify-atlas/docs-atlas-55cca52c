@@ -1,0 +1,269 @@
+---
+title: "Connecting to WMS and OGC Web Services"
+sidebarTitle: "WMS & OGC"
+description: "Connect NASA WorldWind Java to WMS imagery servers, WCS elevation services, and other OGC standards-based web services using the built-in OGC client libraries."
+---
+
+NASA WorldWind Java ships with a comprehensive set of OGC client libraries that speak WMS, WCS, KML, GML, and OWS Common natively. The `gov.nasa.worldwind.ogc` package tree mirrors the OGC specification namespace hierarchy — `ogc.wms`, `ogc.wcs`, `ogc.kml`, `ogc.gml`, and `ogc.ows` — and every capabilities document type exposes a rich Java object model rather than raw XML. This lets you build service-driven globes that discover layer metadata at runtime, respond to changing server configurations, and compose imagery and elevation from multiple standards-compliant sources.
+
+## WMS Capabilities
+
+`WMSCapabilities` (in `gov.nasa.worldwind.ogc.wms`) is the entry point for any WMS integration. Call the static `WMSCapabilities.retrieve(URI)` factory method to fetch and parse the `GetCapabilities` response from a WMS server, then call `parse()` to populate the object model:
+
+```java FetchWMSCapabilities.java
+import gov.nasa.worldwind.ogc.wms.WMSCapabilities;
+import gov.nasa.worldwind.ogc.wms.WMSLayerCapabilities;
+
+import java.net.URI;
+import java.util.List;
+import java.util.Set;
+
+URI serverURI = new URI("https://neowms.sci.gsfc.nasa.gov/wms/wms");
+
+WMSCapabilities caps = WMSCapabilities.retrieve(serverURI);
+caps.parse();
+
+// Enumerate image formats the server supports
+Set<String> formats = caps.getImageFormats();
+// e.g. "image/png", "image/jpeg", "image/gif"
+
+// Get all named (requestable) layers
+List<WMSLayerCapabilities> namedLayers = caps.getNamedLayers();
+for (WMSLayerCapabilities layer : namedLayers)
+{
+    System.out.printf("Layer: %s — %s%n",
+        layer.getName(), layer.getTitle());
+}
+
+// Retrieve a specific layer by its WMS name
+WMSLayerCapabilities modisLayer = caps.getLayerByName("MOD_LSTD_CLIM_M");
+
+// Get the GetMap request URL for a given protocol and method
+String getMapURL = caps.getRequestURL("GetMap", "http", "Get");
+```
+
+Key `WMSCapabilities` methods:
+
+| Method | Returns | Description |
+|---|---|---|
+| `getImageFormats()` | `Set<String>` | MIME types the server accepts for GetMap responses |
+| `getNamedLayers()` | `List<WMSLayerCapabilities>` | All requestable named layers |
+| `getLayerByName(String)` | `WMSLayerCapabilities` | A specific layer by its `<Name>` element |
+| `getRequestURL(String, String, String)` | `String` | GetMap / GetFeatureInfo endpoint URL |
+| `getServiceInformation()` | `OGCServiceInformation` | Server title, abstract, keywords, contact |
+| `getCapabilityInformation()` | `WMSCapabilityInformation` | Layer tree and request descriptions |
+
+`WMSLayerCapabilities` exposes layer-level metadata including `getTitle()`, `getAbstract()`, `getBoundingBoxes()`, `getStyles()`, and `getStyleByName(String)`.
+
+<Tip>
+Cache the `WMSCapabilities` object for the lifetime of your application session. Calling `WMSCapabilities.retrieve()` issues an HTTP GET to the server. Repeated calls on every layer toggle will introduce unnecessary latency and load on the service.
+</Tip>
+
+## Creating a WMS Layer
+
+`WMSTiledImageLayer` (in `gov.nasa.worldwind.wms`) is a `BasicTiledImageLayer` subclass that constructs compliant WMS `GetMap` request URLs from its configuration. Instantiate it with a `WMSCapabilities` document and an `AVList` of layer parameters:
+
+```java CreateWMSLayer.java
+import gov.nasa.worldwind.avlist.AVKey;
+import gov.nasa.worldwind.avlist.AVListImpl;
+import gov.nasa.worldwind.ogc.wms.WMSCapabilities;
+import gov.nasa.worldwind.wms.WMSTiledImageLayer;
+
+import java.net.URI;
+
+// Retrieve capabilities (do this once and reuse)
+WMSCapabilities caps = WMSCapabilities.retrieve(
+    new URI("https://neowms.sci.gsfc.nasa.gov/wms/wms"));
+caps.parse();
+
+// Configure the layer parameters
+AVListImpl params = new AVListImpl();
+params.setValue(AVKey.LAYER_NAMES,  "MOD_LSTD_CLIM_M");  // WMS layer name(s)
+params.setValue(AVKey.STYLE_NAMES,  "");                   // WMS style name(s)
+params.setValue(AVKey.IMAGE_FORMAT, "image/png");          // GetMap format
+
+// Optional: tune retrieval timeouts
+params.setValue(AVKey.URL_CONNECT_TIMEOUT, 30_000);
+params.setValue(AVKey.URL_READ_TIMEOUT,    30_000);
+
+// Construct and register the layer
+WMSTiledImageLayer wmsLayer = new WMSTiledImageLayer(caps, params);
+wmsLayer.setName("MODIS Land Surface Temperature");
+wmsLayer.setOpacity(0.8);
+
+wwd.getModel().getLayers().add(wmsLayer);
+```
+
+Key `AVKey` parameters used by `WMSTiledImageLayer`:
+
+| `AVKey` constant | Typical value | Description |
+|---|---|---|
+| `AVKey.LAYER_NAMES` | `"layerA,layerB"` | Comma-separated WMS layer names |
+| `AVKey.STYLE_NAMES` | `"default"` | Comma-separated WMS style names |
+| `AVKey.IMAGE_FORMAT` | `"image/png"` | GetMap response format |
+| `AVKey.WMS_VERSION` | `"1.3.0"` | WMS version string |
+| `AVKey.COORDINATE_SYSTEM` | `"EPSG:4326"` | CRS/SRS for the request |
+| `AVKey.WMS_BACKGROUND_COLOR` | `"0xFFFFFF"` | Transparent background color |
+| `AVKey.DATASET_NAME` | `"MyLayer"` | Cache key used for tile storage |
+| `AVKey.DATA_CACHE_NAME` | `"MyApp/WMS/..."` | File-store cache subdirectory |
+
+<Note>
+If the WMS server advertises `application/bil` as an image format, WorldWind's factory system interprets the service as an elevation source and creates a `WMSBasicElevationModel` instead of a `WMSTiledImageLayer`. The `WMSLayersPanel.getFactoryKeyForCapabilities()` method demonstrates this detection: it checks `caps.getImageFormats()` for the `"application/bil"` substring and returns `AVKey.ELEVATION_MODEL_FACTORY` or `AVKey.LAYER_FACTORY` accordingly.
+</Note>
+
+## WMS Layer Manager
+
+The `WMSLayerManager` example application (`gov.nasa.worldwindx.examples.WMSLayerManager`) demonstrates a complete UI-driven WMS browser. It uses `WMSLayersPanel` — a `JPanel` subclass that retrieves and displays all named layers from a WMS server URL, then adds or removes each selected layer from the `WorldWindow`.
+
+```java UseWMSLayerManager.java
+import gov.nasa.worldwindx.examples.WMSLayersPanel;
+import java.awt.Dimension;
+import java.net.URISyntaxException;
+
+// Each tab in WMSLayerManager wraps a WMSLayersPanel for one server
+WMSLayersPanel panel = new WMSLayersPanel(
+    wwd,
+    "https://neowms.sci.gsfc.nasa.gov/wms/wms",
+    new Dimension(400, 600));
+```
+
+`WMSLayersPanel` pre-configures the WMS servers listed in `WMSLayerManager.servers`:
+
+```java WMSLayerManagerServers.java
+// From WMSLayerManager.java
+protected static final String[] servers = new String[] {
+    "https://neowms.sci.gsfc.nasa.gov/wms/wms",
+    "https://sedac.ciesin.columbia.edu/geoserver/wcs"
+};
+```
+
+## WCS Elevation
+
+OGC Web Coverage Service (WCS) 1.0.0 endpoints that serve elevation data are handled by `WCSElevationModel` (in `gov.nasa.worldwind.terrain`). Construct it from a parsed `WCS100Capabilities` document:
+
+```java CreateWCSElevationModel.java
+import gov.nasa.worldwind.avlist.AVKey;
+import gov.nasa.worldwind.avlist.AVListImpl;
+import gov.nasa.worldwind.ogc.wcs.wcs100.WCS100Capabilities;
+import gov.nasa.worldwind.terrain.WCSElevationModel;
+
+import java.net.URI;
+
+WCS100Capabilities wcsCaps = WCS100Capabilities.retrieve(
+    new URI("https://data.worldwind.arc.nasa.gov/elev"));
+wcsCaps.parse();
+
+AVListImpl wcsParams = new AVListImpl();
+wcsParams.setValue(AVKey.IDENTIFIER,    "SRTM30");  // coverage identifier
+wcsParams.setValue(AVKey.FORMAT_SUFFIX, ".bil");     // BIL = binary elevation
+
+WCSElevationModel wcsElev = new WCSElevationModel(wcsCaps, wcsParams);
+
+// Install as the globe's elevation model
+wwd.getModel().getGlobe().setElevationModel(wcsElev);
+```
+
+For compositing WCS elevation with an existing model, wrap both in a `CompoundElevationModel`. See the [Imagery & Elevation](/guides/imagery-elevation) guide for the composition pattern.
+
+## KML (OGC)
+
+KML 2.2 is an OGC standard, and WorldWind's `gov.nasa.worldwind.ogc.kml` package is a full KML/KMZ parser and renderer. Loading KML from a URL — including from OGC-compliant WFS GML with KML wrappers — uses the same `KMLRoot.createAndParse()` entry point. See the [KML & COLLADA](/guides/kml-collada) guide for complete details.
+
+## GML Support
+
+The `gov.nasa.worldwind.ogc.gml` package provides parsers for GML 3.x geometry primitives used internally by WCS capabilities documents and elsewhere:
+
+| Class | GML element |
+|---|---|
+| `GMLEnvelope` | `<gml:Envelope>` — an axis-aligned bounding box |
+| `GMLEnvelopeWithTimePeriod` | Envelope with temporal extent |
+| `GMLRectifiedGrid` | `<gml:RectifiedGrid>` — used in WCS coverage descriptions |
+| `GMLGrid` | `<gml:Grid>` — grid origin and extent |
+| `GMLPos` | `<gml:pos>` — a single position coordinate |
+| `GMLLimits` | `<gml:limits>` — grid index bounds |
+| `GMLGridEnvelope` | `<gml:GridEnvelope>` — low/high index bounds |
+| `GMLOrigin` | `<gml:origin>` — grid origin position |
+
+These classes are used automatically when WCS or WFS documents are parsed; you rarely need to instantiate them directly.
+
+## OWS Common
+
+OGC OWS Common base types shared across WMS, WCS, and WFS services are in `gov.nasa.worldwind.ogc.ows`:
+
+| Class | Purpose |
+|---|---|
+| `OWSCapabilities` | Abstract base for all OWS-family capabilities documents |
+| `OWSServiceIdentification` | Service title, abstract, keywords, and fees |
+| `OWSServiceProvider` | Contact name, organisation, and online resource |
+| `OWSOperationsMetadata` | Declared operations and their HTTP endpoints |
+| `OWSOperation` | A single service operation descriptor |
+| `OWSWGS84BoundingBox` | Axis-aligned bounding box in WGS-84 |
+| `OWSConstraint` | Parameter constraint (allowed values list) |
+
+For WMS specifically, the non-OWS `OGCCapabilities` base class (in `gov.nasa.worldwind.ogc`) provides `getServiceInformation()` → `OGCServiceInformation` and `getCapabilityInformation()` → `OGCCapabilityInformation`. `WMSCapabilities` extends this base:
+
+```java InspectWMSServiceInfo.java
+import gov.nasa.worldwind.ogc.OGCServiceInformation;
+import gov.nasa.worldwind.ogc.wms.WMSCapabilities;
+
+WMSCapabilities caps = WMSCapabilities.retrieve(serverURI);
+caps.parse();
+
+OGCServiceInformation serviceInfo = caps.getServiceInformation();
+System.out.println("Service title: " + serviceInfo.getServiceTitle());
+System.out.println("Service abstract: " + serviceInfo.getServiceAbstract());
+```
+
+## COLLADA
+
+COLLADA 3D models are referenced from KML `<Model>` elements and parsed automatically by the `gov.nasa.worldwind.ogc.collada` package when KML is loaded. See the [KML & COLLADA](/guides/kml-collada) guide for a full description of the COLLADA pipeline and the relevant parser classes.
+
+## Full Example: WMS Layer from a Capabilities URL
+
+The following snippet shows the complete end-to-end workflow for discovering and adding a WMS layer at runtime, suitable for embedding in an application's "Add Layer" dialog:
+
+```java FullWMSSetup.java
+import gov.nasa.worldwind.avlist.AVKey;
+import gov.nasa.worldwind.avlist.AVListImpl;
+import gov.nasa.worldwind.ogc.wms.WMSCapabilities;
+import gov.nasa.worldwind.ogc.wms.WMSLayerCapabilities;
+import gov.nasa.worldwind.wms.WMSTiledImageLayer;
+
+import java.net.URI;
+import java.util.List;
+import java.util.Set;
+
+// Step 1: fetch and parse the capabilities document
+//         (run this off the EDT in a background thread)
+URI serverURI = new URI("https://neowms.sci.gsfc.nasa.gov/wms/wms");
+WMSCapabilities caps = WMSCapabilities.retrieve(serverURI);
+caps.parse();
+
+// Step 2: discover available layers
+List<WMSLayerCapabilities> layers = caps.getNamedLayers();
+WMSLayerCapabilities chosen = layers.get(0); // pick the first for this example
+
+// Step 3: select an image format
+Set<String> formats = caps.getImageFormats();
+String format = formats.contains("image/png") ? "image/png" : "image/jpeg";
+
+// Step 4: configure the AVList
+AVListImpl params = new AVListImpl();
+params.setValue(AVKey.LAYER_NAMES,  chosen.getName());
+params.setValue(AVKey.STYLE_NAMES,  "");
+params.setValue(AVKey.IMAGE_FORMAT, format);
+params.setValue(AVKey.DATA_CACHE_NAME,
+    "WMS/" + serverURI.getHost() + "/" + chosen.getName());
+
+// Step 5: create and register the layer
+//         (switch back to the EDT for this step)
+WMSTiledImageLayer wmsLayer = new WMSTiledImageLayer(caps, params);
+wmsLayer.setName(chosen.getTitle() != null ? chosen.getTitle() : chosen.getName());
+
+wwd.getModel().getLayers().add(wmsLayer);
+wwd.redraw();
+```
+
+<Tip>
+Set `AVKey.DATA_CACHE_NAME` to a path that encodes the server host and layer name (as shown above). This prevents tile collisions when the user adds multiple layers from different servers, and ensures that cached tiles from one server are never mistakenly served for another.
+</Tip>

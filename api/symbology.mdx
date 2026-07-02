@@ -1,0 +1,338 @@
+---
+title: "Tactical Symbology API: MIL-STD-2525 Symbols and Graphics"
+sidebarTitle: "Symbology"
+description: "Reference for TacticalSymbol, TacticalGraphic, TacticalSymbolAttributes, SymbologyConstants, and the MIL-STD-2525 implementation in WorldWind Java."
+---
+
+The `gov.nasa.worldwind.symbology` package provides a symbology framework that decouples the abstract concept of a tactical symbol or graphic from any specific standard. The MIL-STD-2525C implementation in `gov.nasa.worldwind.symbology.milstd2525` provides concrete classes for rendering icons, lines, and area graphics compliant with the NATO standard. All symbols and graphics implement `Renderable` and can be added to a `RenderableLayer`.
+
+---
+
+## `TacticalSymbol` Interface
+
+`TacticalSymbol` represents a point symbol identified by a string code (SIDC in MIL-STD-2525). It extends `WWObject`, `Renderable`, and `Highlightable`.
+
+```java title="TacticalSymbol interface — key methods"
+public interface TacticalSymbol extends WWObject, Renderable, Highlightable {
+
+    // Visibility
+    boolean isVisible();
+    void    setVisible(boolean visible);
+
+    // Identity
+    String getIdentifier();     // 15-char SIDC for MIL-STD-2525
+
+    // Position and altitude
+    Position getPosition();
+    void     setPosition(Position position);
+    int      getAltitudeMode();
+    void     setAltitudeMode(int altitudeMode);
+
+    // Modifiers (text and graphic)
+    Object getModifier(String modifier);
+    void   setModifier(String modifier, Object value);
+
+    // Modifier visibility
+    boolean isShowGraphicModifiers();
+    void    setShowGraphicModifiers(boolean showGraphicModifiers);
+    boolean isShowTextModifiers();
+    void    setShowTextModifiers(boolean showTextModifiers);
+    boolean isShowLocation();
+    void    setShowLocation(boolean show);
+    boolean isShowHostileIndicator();
+    void    setShowHostileIndicator(boolean show);
+
+    // Attributes
+    TacticalSymbolAttributes getAttributes();
+    void                     setAttributes(TacticalSymbolAttributes normalAttrs);
+    TacticalSymbolAttributes getHighlightAttributes();
+    void                     setHighlightAttributes(TacticalSymbolAttributes highlightAttrs);
+
+    // LOD selector (dynamic detail management)
+    LODSelector getLODSelector();
+    void        setLODSelector(LODSelector LODSelector);
+
+    // Delegate owner for picking
+    Object getDelegateOwner();
+    void   setDelegateOwner(Object owner);
+
+    // Units format for text modifiers (e.g., altitude display)
+    UnitsFormat getUnitsFormat();
+    void        setUnitsFormat(UnitsFormat unitsFormat);
+}
+```
+
+---
+
+## `TacticalSymbolAttributes`
+
+`TacticalSymbolAttributes` controls the visual appearance of a `TacticalSymbol`. Instances may be shared across many symbols. Any field left `null` retains the implementation's default.
+
+```java title="TacticalSymbolAttributes — scaling, opacity, and text"
+TacticalSymbolAttributes attrs = new BasicTacticalSymbolAttributes();
+
+// Scale (1.0 = native size; <1.0 smaller, >1.0 larger)
+attrs.setScale(0.75);
+
+// Opacity (0.0 = transparent, 1.0 = opaque) — applies to icon and modifiers
+attrs.setOpacity(0.9);
+
+// Override the frame/icon interior colour
+attrs.setInteriorMaterial(new Material(Color.BLUE));
+
+// Text modifier font
+attrs.setTextModifierFont(new Font("Arial", Font.PLAIN, 12));
+
+// Text modifier material (colour)
+attrs.setTextModifierMaterial(new Material(Color.BLACK));
+
+symbol.setAttributes(attrs);
+
+// Separate highlight attributes
+TacticalSymbolAttributes highlight = new BasicTacticalSymbolAttributes();
+highlight.setScale(1.2);
+highlight.setOpacity(1.0);
+symbol.setHighlightAttributes(highlight);
+```
+
+| Method | Description |
+|---|---|
+| `setScale(Double)` | Size multiplier; `null` uses implementation default. |
+| `setOpacity(Double)` | 0–1 transparency; applies to entire symbol including modifiers. |
+| `setInteriorMaterial(Material)` | Override icon/frame fill colour. |
+| `setTextModifierFont(Font)` | Font for text labels around the symbol. |
+| `setTextModifierMaterial(Material)` | Colour for text modifier labels. |
+
+---
+
+## `TacticalGraphic` Interface
+
+`TacticalGraphic` represents a multi-point tactical graphic — a line, area, or composite shape positioned by one or more control points. It extends `Renderable`, `Highlightable`, `Movable`, and `AVList`.
+
+```java title="TacticalGraphic interface — key methods"
+public interface TacticalGraphic extends Renderable, Highlightable, Movable, AVList {
+
+    // Visibility
+    boolean isVisible();
+    void    setVisible(boolean visible);
+
+    // Identity
+    String getIdentifier();
+
+    // Modifiers
+    Object getModifier(String modifier);
+    void   setModifier(String modifier, Object value);
+
+    // Modifier display
+    boolean isShowGraphicModifiers();
+    void    setShowGraphicModifiers(boolean showGraphicModifiers);
+    boolean isShowTextModifiers();
+    void    setShowTextModifiers(boolean showTextModifiers);
+    boolean isShowLocation();
+    void    setShowLocation(boolean show);
+    boolean isShowHostileIndicator();
+    void    setShowHostileIndicator(boolean show);
+
+    // Control points
+    Iterable<? extends Position> getPositions();
+    void setPositions(Iterable<? extends Position> positions);
+
+    // Convenience text modifier (== UNIQUE_DESIGNATION)
+    String getText();
+    void   setText(String text);
+
+    // Attributes
+    TacticalGraphicAttributes getAttributes();
+    void                      setAttributes(TacticalGraphicAttributes attributes);
+    TacticalGraphicAttributes getHighlightAttributes();
+    void                      setHighlightAttributes(TacticalGraphicAttributes attributes);
+
+    // Label placement
+    Offset getLabelOffset();
+    void   setLabelOffset(Offset offset);
+
+    // Delegate owner for picking
+    Object getDelegateOwner();
+    void   setDelegateOwner(Object owner);
+
+    // Unit format
+    UnitsFormat getUnitsFormat();
+    void        setUnitsFormat(UnitsFormat unitsFormat);
+}
+```
+
+---
+
+## `TacticalGraphicAttributes`
+
+`TacticalGraphicAttributes` controls the appearance of tactical graphic outlines, fills, and text. Non-null values override the symbol-set defaults; null values retain defaults.
+
+```java title="TacticalGraphicAttributes — override example"
+TacticalGraphicAttributes attrs = new BasicTacticalGraphicAttributes();
+
+// Outline
+attrs.setOutlineMaterial(Material.RED);
+attrs.setOutlineWidth(3.0);
+
+// Interior fill
+attrs.setInteriorMaterial(new Material(new Color(255, 0, 0, 80)));
+attrs.setInteriorOpacity(0.3);
+
+// Text modifiers
+attrs.setTextModifierMaterial(new Material(Color.WHITE));
+attrs.setTextModifierFont(new Font("Arial", Font.BOLD, 14));
+
+// Scale (affects point graphic size; line/area graphics are unaffected
+// unless they contain an embedded tactical symbol)
+attrs.setScale(1.0);
+
+graphic.setAttributes(attrs);
+```
+
+---
+
+## `SymbologyConstants`
+
+`SymbologyConstants` is an interface containing string constant keys for MIL-STD-2525 modifier fields. Pass these as the first argument to `setModifier()` / `getModifier()`.
+
+### Key Modifier Constants
+
+| Constant | MIL-STD-2525 Field | Value Type | Description |
+|---|---|---|---|
+| `ADDITIONAL_INFORMATION` | `"H"` | `String` (≤ 20 chars) | Free-text additional info. |
+| `ALTITUDE_DEPTH` | `"X"` | `String` (≤ 14 chars) | Altitude flight level or depth. |
+| `AZIMUTH` | `"AN"` | `Angle` | Direction relative to true north. |
+| `DIRECTION_OF_MOVEMENT` | `"Q"` | `Angle` | Heading indicator arrow. |
+| `FEINT_DUMMY` | `"AB"` | `String` | Feint/dummy unit modifier. |
+| `QUANTITY` | `"C"` | `String` | Numeric quantity label. |
+| `REINFORCED_REDUCED` | `"F"` | `String` | Reinforcement/reduction status. |
+| `REINFORCED` | `"R"` | `String` | Unit is reinforced. |
+| `REDUCED` | `"D"` | `String` | Unit is reduced. |
+| `REINFORCED_AND_REDUCED` | `"RD"` | `String` | Both reinforced and reduced. |
+| `UNIQUE_DESIGNATION` | `"T"` | `String` | Unit/graphic identifier text. |
+| `STATUS_ANTICIPATED` | `"A"` | — | Symbol status: anticipated/planned. |
+| `STATUS_PRESENT` | `"P"` | — | Symbol status: present. |
+| `STANDARD_IDENTITY_HOSTILE` | `"H"` | — | Hostile/enemy identity. |
+| `AUXILIARY_EQUIPMENT` | `"AG"` | `String` | Auxiliary equipment code. |
+
+```java title="Setting common modifiers on a TacticalSymbol"
+symbol.setModifier(SymbologyConstants.UNIQUE_DESIGNATION,  "1-7 IN");
+symbol.setModifier(SymbologyConstants.ADDITIONAL_INFORMATION, "OPFOR");
+symbol.setModifier(SymbologyConstants.DIRECTION_OF_MOVEMENT, Angle.fromDegrees(270));
+symbol.setModifier(SymbologyConstants.QUANTITY, "42");
+```
+
+---
+
+## `MilStd2525TacticalSymbol`
+
+`MilStd2525TacticalSymbol` is the MIL-STD-2525C implementation of `TacticalSymbol`, located in `gov.nasa.worldwind.symbology.milstd2525`.
+
+```java title="MilStd2525TacticalSymbol — constructors"
+// Constructor 1: SIDC + position
+TacticalSymbol symbol = new MilStd2525TacticalSymbol(
+    "SFGPU---------G",                     // 15-character SIDC
+    Position.fromDegrees(40.0, -120.0, 0)  // geographic position
+);
+
+// Constructor 2: SIDC + position + initial modifiers
+AVList modifiers = new AVListImpl();
+modifiers.setValue(SymbologyConstants.DIRECTION_OF_MOVEMENT, Angle.fromDegrees(45));
+modifiers.setValue(SymbologyConstants.UNIQUE_DESIGNATION, "Alpha");
+TacticalSymbol symbolWithMods = new MilStd2525TacticalSymbol(
+    "SFGPU---------G",
+    Position.fromDegrees(40.0, -120.0, 0),
+    modifiers
+);
+```
+
+SIDC position 1 specifies the coding scheme; position 2 the standard identity (F=Friendly, H=Hostile, N=Neutral, U=Unknown); position 3 the battle dimension (G=Ground, A=Air, S=Sea surface, U=Subsurface). The altitude mode is automatically derived from the SIDC battle dimension but can be overridden with `setAltitudeMode()`.
+
+---
+
+## `MilStd2525GraphicFactory`
+
+`MilStd2525GraphicFactory` implements `TacticalGraphicFactory` and creates all MIL-STD-2525 tactical graphics (lines, areas, and special point graphics).
+
+```java title="MilStd2525GraphicFactory — createGraphic"
+TacticalGraphicFactory factory = new MilStd2525GraphicFactory();
+
+// Control points for a hostile phase line
+List<Position> positions = Arrays.asList(
+    Position.fromDegrees(34.7327, -117.8347, 0),
+    Position.fromDegrees(34.7328, -117.7305, 0)
+);
+
+// Modifiers
+AVList modifiers = new AVListImpl();
+modifiers.setValue(SymbologyConstants.UNIQUE_DESIGNATION, "PL ALPHA");
+
+// Create a hostile phase line (SIDC GHGPGLP----AUSX)
+TacticalGraphic phaseLine = factory.createGraphic(
+    "GHGPGLP----AUSX",
+    positions,
+    modifiers
+);
+
+// Create a point graphic with a single position
+TacticalGraphic point = factory.createPoint(
+    "GFGPAPD----AUSX",
+    Position.fromDegrees(34.9, -118.2, 0),
+    null
+);
+```
+
+---
+
+## Complete Example: MIL-STD-2525 Symbol Rendering
+
+```java title="Creating and rendering a MIL-STD-2525 friendly ground unit"
+// 1. Create the symbol layer
+RenderableLayer symbolLayer = new RenderableLayer();
+symbolLayer.setName("Tactical Symbols");
+
+// 2. Create a friendly mechanised infantry unit
+TacticalSymbol symbol = new MilStd2525TacticalSymbol(
+    "SFGPUCI-------G",   // Friendly / Ground / Unit / Combat Infantry
+    Position.fromDegrees(36.5, -119.5, 0)
+);
+symbol.setAltitudeMode(WorldWind.CLAMP_TO_GROUND);
+
+// 3. Add modifiers
+symbol.setModifier(SymbologyConstants.UNIQUE_DESIGNATION, "1-7 IN");
+symbol.setModifier(SymbologyConstants.DIRECTION_OF_MOVEMENT, Angle.fromDegrees(90));
+symbol.setShowTextModifiers(true);
+symbol.setShowGraphicModifiers(true);
+
+// 4. Style
+TacticalSymbolAttributes attrs = new BasicTacticalSymbolAttributes();
+attrs.setScale(1.0);
+attrs.setOpacity(1.0);
+symbol.setAttributes(attrs);
+
+TacticalSymbolAttributes hilite = new BasicTacticalSymbolAttributes();
+hilite.setScale(1.3);
+symbol.setHighlightAttributes(hilite);
+
+// 5. Add to layer and scene
+symbolLayer.addRenderable(symbol);
+
+// 6. Create a supporting phase line graphic
+TacticalGraphicFactory factory = new MilStd2525GraphicFactory();
+List<Position> linePositions = Arrays.asList(
+    Position.fromDegrees(36.3, -119.8, 0),
+    Position.fromDegrees(36.3, -119.2, 0)
+);
+TacticalGraphic phaseLine = factory.createGraphic(
+    "GFGPGLP----AUSX",   // Friendly phase line
+    linePositions, null);
+phaseLine.setText("PL BRAVO");
+symbolLayer.addRenderable(phaseLine);
+
+wwd.getModel().getLayers().add(symbolLayer);
+wwd.redraw();
+```
+
+<Tip>
+  Pass `SymbologyConstants.ALL_STATISTICS_SET` to `WorldWindow.setPerformanceStatisticKeys()` to monitor symbol rendering frame rates when working with large symbol sets. See the [Utilities API](/api/util) for `PerformanceStatistic` details.
+</Tip>

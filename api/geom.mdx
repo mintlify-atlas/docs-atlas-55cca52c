@@ -1,0 +1,651 @@
+---
+title: "Geometry Types: LatLon, Position, Sector, Angle, Vec4"
+sidebarTitle: "Geometry"
+description: "Reference for WorldWind Java geometry types: LatLon, Position, Angle, Sector, Vec4, Matrix, Line, Extent, and Intersection used throughout the SDK."
+---
+
+The `gov.nasa.worldwind.geom` package provides the foundational geometric primitives used throughout the WorldWind Java SDK. All of the core types — `Angle`, `LatLon`, `Position`, `Sector`, `Vec4`, `Matrix`, `Line`, `Extent`, and `Intersection` — are immutable value objects, making them safe to share across threads and ideal for use in rendering pipelines, spatial queries, and terrain calculations. Understanding these types is essential before working with globes, layers, or any spatial operation in WorldWind.
+
+---
+
+## Angle
+
+`gov.nasa.worldwind.geom.Angle` represents an immutable geometric angle stored internally as both degrees and radians. Because both representations are precomputed at construction time, switching between them incurs no runtime cost.
+
+### Factory Methods
+
+| Method | Description |
+|--------|-------------|
+| `Angle.fromDegrees(double degrees)` | Creates an `Angle` from a value in degrees |
+| `Angle.fromRadians(double radians)` | Creates an `Angle` from a value in radians |
+| `Angle.fromDMS(int degrees, int minutes, int seconds)` | Creates an `Angle` from integer degrees, minutes, and seconds |
+| `Angle.fromDMdS(int degrees, double minutes)` | Creates an `Angle` from integer degrees and decimal minutes |
+| `Angle.fromDMS(String dmsString)` | Parses a DMS-formatted string such as `"45 12 30 N"` |
+| `Angle.fromXY(double x, double y)` | Creates an angle using `atan2(y, x)` |
+| `Angle.fromDegreesLatitude(double degrees)` | Creates a latitude-clamped angle (−90 to +90) |
+| `Angle.fromDegreesLongitude(double degrees)` | Creates a longitude-clamped angle (−180 to +180) |
+
+### Key Accessors
+
+```java title="Reading Angle values"
+Angle a = Angle.fromDegrees(45.5);
+
+double deg = a.getDegrees();  // 45.5
+double rad = a.getRadians();  // 0.7941...
+
+// Public fields (direct access, no method call needed)
+double d = a.degrees;         // 45.5
+double r = a.radians;         // 0.7941...
+```
+
+### Arithmetic
+
+All arithmetic methods return a new `Angle` — the original is never modified.
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `add` | `Angle add(Angle angle)` | Returns the sum of this angle and another |
+| `subtract` | `Angle subtract(Angle angle)` | Returns this angle minus another |
+| `multiply` | `Angle multiply(double multiplier)` | Scales this angle by a scalar |
+| `divide` | `Angle divide(double divisor)` | Divides this angle by a scalar |
+| `divide` | `double divide(Angle angle)` | Returns this angle's degrees divided by another's degrees |
+| `addDegrees` | `Angle addDegrees(double degrees)` | Adds a raw degree value |
+| `subtractDegrees` | `Angle subtractDegrees(double degrees)` | Subtracts a raw degree value |
+| `angularDistanceTo` | `Angle angularDistanceTo(Angle angle)` | Shortest angular distance between two angles (handles wrap-around) |
+
+### Trigonometry
+
+```java title="Trigonometric convenience methods"
+Angle a = Angle.fromDegrees(30.0);
+double sinA = a.sin();          // Math.sin(a.radians)
+double cosA = a.cos();          // Math.cos(a.radians)
+double tanHalf = a.tanHalfAngle();  // Math.tan(0.5 * a.radians)
+```
+
+### Constants
+
+| Constant | Value |
+|----------|-------|
+| `Angle.ZERO` | 0° |
+| `Angle.POS90` | +90° |
+| `Angle.NEG90` | −90° |
+| `Angle.POS180` | +180° |
+| `Angle.NEG180` | −180° |
+| `Angle.POS360` | +360° |
+| `Angle.MINUTE` | 1/60° |
+| `Angle.SECOND` | 1/3600° |
+
+### Normalization and Utilities
+
+```java title="Normalization helpers"
+Angle normalized = Angle.normalizedAngle(Angle.fromDegrees(270));   // -90°
+Angle normLat    = Angle.normalizedLatitude(Angle.fromDegrees(100)); // 80°
+Angle normLon    = Angle.normalizedLongitude(Angle.fromDegrees(200)); // -160°
+
+// Static min/max
+Angle bigger = Angle.max(Angle.fromDegrees(30), Angle.fromDegrees(45)); // 45°
+Angle clamped = Angle.clamp(Angle.fromDegrees(100), Angle.NEG90, Angle.POS90); // 90°
+
+// Interpolation via spherical linear interpolation
+Angle mid = Angle.mix(0.5, Angle.fromDegrees(0), Angle.fromDegrees(90)); // ~45°
+```
+
+<Note>
+`Angle.fromDMS(int, int, int)` requires that `degrees >= 0` and `0 <= minutes < 60` and `0 <= seconds < 60`. For negative angles, multiply the result: `Angle.fromDMS(45, 12, 30).multiply(-1)`.
+</Note>
+
+---
+
+## LatLon
+
+`gov.nasa.worldwind.geom.LatLon` is an immutable pair of `Angle` values representing a geographic location on the surface of a globe. Latitude ranges from −90° to +90° (south to north), and longitude from −180° to +180° (west to east).
+
+### Factory Methods and Fields
+
+```java title="Creating LatLon instances"
+// From decimal degrees
+LatLon nyc = LatLon.fromDegrees(40.7128, -74.0060);
+
+// From radians
+LatLon equator = LatLon.fromRadians(0.0, 0.0);
+
+// From Angle objects directly
+LatLon ll = new LatLon(Angle.fromDegrees(51.5), Angle.fromDegrees(-0.12));
+
+// Public fields
+Angle lat = ll.latitude;   // Angle
+Angle lon = ll.longitude;  // Angle
+
+// Accessor methods
+Angle latA = ll.getLatitude();
+Angle lonA = ll.getLongitude();
+
+// As arrays
+double[] degreesArray = ll.asDegreesArray(); // [lat, lon] in degrees
+double[] radiansArray = ll.asRadiansArray(); // [lat, lon] in radians
+```
+
+### Distance Methods
+
+All distance methods use a **spherical model** (not ellipsoidal). Multiply the returned angular distance by the globe radius (meters) to get a meter-distance.
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `greatCircleDistance` | `static Angle greatCircleDistance(LatLon p1, LatLon p2)` | Angular distance along the great circle (Haversine formula) |
+| `rhumbDistance` | `static Angle rhumbDistance(LatLon p1, LatLon p2)` | Angular distance along a rhumb (constant-heading) line |
+| `linearDistance` | `static Angle linearDistance(LatLon p1, LatLon p2)` | Simple Euclidean angular distance treating lat/lon as 2D |
+| `pathDistance` | `static Angle pathDistance(String pathType, LatLon p1, LatLon p2)` | Distance using `AVKey.GREAT_CIRCLE`, `RHUMB_LINE`, or default |
+| `ellipsoidalDistance` | `static double ellipsoidalDistance(LatLon p1, LatLon p2, double equatorialRadius, double polarRadius)` | Vincenty iterative distance in meters |
+
+```java title="Computing great-circle distance in meters"
+LatLon london   = LatLon.fromDegrees(51.5074, -0.1278);
+LatLon new_york = LatLon.fromDegrees(40.7128, -74.0060);
+
+Angle angularDist = LatLon.greatCircleDistance(london, new_york);
+double distMeters = angularDist.radians * 6371000; // multiply by mean earth radius
+
+// Azimuth from London toward New York (clockwise from North)
+Angle azimuth = LatLon.greatCircleAzimuth(london, new_york);
+```
+
+### Azimuth and End-Position
+
+```java title="Great circle arc and rhumb navigation"
+LatLon start   = LatLon.fromDegrees(0, 0);
+Angle  azimuth = Angle.fromDegrees(45);     // NE
+Angle  dist    = Angle.fromDegrees(10);     // 10° of arc
+
+// Point 10° along the NE great-circle from the equator
+LatLon end = LatLon.greatCircleEndPosition(start, azimuth, dist);
+
+// Rhumb line equivalents
+Angle rhumbAz  = LatLon.rhumbAzimuth(start, end);
+LatLon rhumbEnd = LatLon.rhumbEndPosition(start, rhumbAz, dist);
+```
+
+### Interpolation
+
+```java title="Interpolating along paths"
+LatLon a = LatLon.fromDegrees(0, 0);
+LatLon b = LatLon.fromDegrees(90, 90);
+
+// Interpolate 50% of the way along a great circle arc
+LatLon mid = LatLon.interpolateGreatCircle(0.5, a, b);
+
+// Interpolate along a rhumb (constant-bearing) line
+LatLon rhumbMid = LatLon.interpolateRhumb(0.5, a, b);
+
+// Simple 2D linear interpolation (treats lat/lon as a flat plane)
+LatLon linearMid = LatLon.interpolate(0.5, a, b);
+
+// Path-type dispatch (AVKey.GREAT_CIRCLE, RHUMB_LINE, or default LINEAR)
+LatLon pathMid = LatLon.interpolate(AVKey.GREAT_CIRCLE, 0.5, a, b);
+```
+
+### Constant
+
+| Constant | Value |
+|----------|-------|
+| `LatLon.ZERO` | `(0°, 0°)` — origin, where the prime meridian meets the equator |
+
+<Tip>
+To convert a `LatLon` distance (in angular radians) to meters, multiply by the globe's mean radius: `distanceRadians * globe.getEquatorialRadius()`. For accurate ellipsoidal distances, use `LatLon.ellipsoidalDistance()`.
+</Tip>
+
+---
+
+## Position
+
+`gov.nasa.worldwind.geom.Position` extends `LatLon` by adding an `elevation` component (in meters above or below mean sea level). It is the standard type for specifying 3D positions in WorldWind.
+
+### Factory Methods and Fields
+
+```java title="Creating Position instances"
+// From decimal degrees + elevation (meters)
+Position everest = Position.fromDegrees(27.9881, 86.9250, 8848.0);
+
+// From radians + elevation
+Position p = Position.fromRadians(0.0, 0.0, 1000.0);
+
+// From a LatLon + elevation
+LatLon ll   = LatLon.fromDegrees(40.0, -75.0);
+Position p2 = new Position(ll, 500.0);
+
+// Public fields (inherited + own)
+Angle  lat  = p.latitude;    // from LatLon
+Angle  lon  = p.longitude;   // from LatLon
+double elev = p.elevation;   // meters
+
+// Accessor methods
+double alt = p.getAltitude();    // same as getElevation()
+double e   = p.getElevation();
+```
+
+### Interpolation
+
+Elevation is always interpolated **linearly**, regardless of the path type used for the lat/lon component.
+
+```java title="Interpolating 3D positions"
+Position pA = Position.fromDegrees(0, 0, 0);
+Position pB = Position.fromDegrees(45, 90, 10000);
+
+// Linear 2D path, linear elevation
+Position mid1 = Position.interpolate(0.5, pA, pB);
+
+// Great-circle lat/lon path, linear elevation
+Position mid2 = Position.interpolateGreatCircle(0.5, pA, pB);
+
+// Rhumb lat/lon path, linear elevation
+Position mid3 = Position.interpolateRhumb(0.5, pA, pB);
+```
+
+### Arithmetic
+
+```java title="Adding and subtracting positions"
+Position sum  = pA.add(pB);      // adds lat, lon, and elevation independently
+Position diff = pA.subtract(pB); // subtracts lat, lon, and elevation independently
+```
+
+### Constant
+
+| Constant | Value |
+|----------|-------|
+| `Position.ZERO` | `(0°, 0°, 0.0)` |
+
+<Note>
+`Position.fromDegrees(double lat, double lon)` without elevation defaults the elevation to `0.0`. This is equivalent to a surface position at sea level.
+</Note>
+
+---
+
+## Sector
+
+`gov.nasa.worldwind.geom.Sector` represents an immutable axis-aligned bounding rectangle on the surface of a globe, defined by minimum/maximum latitude and minimum/maximum longitude. It implements `Cacheable` and `Comparable<Sector>` and also implements `Iterable<LatLon>` (iterating over its four corner vertices).
+
+### Factory Methods
+
+```java title="Creating Sector instances"
+// From degree bounds (minLat, maxLat, minLon, maxLon)
+Sector conus = Sector.fromDegrees(24.0, 50.0, -125.0, -66.0);
+
+// From radian bounds
+Sector s = Sector.fromRadians(-Math.PI/4, Math.PI/4, -Math.PI/2, Math.PI/2);
+
+// From an array [minLat, maxLat, minLon, maxLon]
+double[] bounds = {-10, 10, -20, 20};
+Sector fromArr = Sector.fromDegrees(bounds);
+
+// Bounding sector for a collection of LatLon points
+List<LatLon> points = Arrays.asList(
+    LatLon.fromDegrees(10, 20),
+    LatLon.fromDegrees(30, 40)
+);
+Sector bounding = Sector.boundingSector(points);
+
+// Bounding sector between two points
+Sector seg = Sector.boundingSector(LatLon.fromDegrees(10, 20),
+                                    LatLon.fromDegrees(30, 40));
+```
+
+### Accessors
+
+| Method | Return Type | Description |
+|--------|-------------|-------------|
+| `getMinLatitude()` | `Angle` | Southern boundary |
+| `getMaxLatitude()` | `Angle` | Northern boundary |
+| `getMinLongitude()` | `Angle` | Western boundary |
+| `getMaxLongitude()` | `Angle` | Eastern boundary |
+| `getDeltaLat()` | `Angle` | Latitudinal extent |
+| `getDeltaLon()` | `Angle` | Longitudinal extent |
+| `getDeltaLatDegrees()` | `double` | Latitudinal extent in degrees |
+| `getDeltaLonDegrees()` | `double` | Longitudinal extent in degrees |
+
+### Spatial Operations
+
+```java title="Sector spatial queries"
+Sector usa  = Sector.fromDegrees(24, 50, -125, -66);
+Sector euro = Sector.fromDegrees(36, 72, -10, 40);
+
+// Containment
+boolean containsParis = usa.contains(LatLon.fromDegrees(48.85, 2.35)); // false
+boolean containsNYC   = usa.contains(Angle.fromDegrees(40.7),
+                                      Angle.fromDegrees(-74.0));         // true
+boolean containsAll   = usa.contains(euro);  // false — does usa fully contain euro?
+
+// Intersection
+boolean overlap  = usa.intersects(euro); // false — no overlap
+Sector  isect    = usa.intersection(euro); // null if no overlap
+
+// Union
+Sector combined = usa.union(euro);           // bounding sector covering both
+Sector bigger   = Sector.union(usa, euro);   // static equivalent
+```
+
+### Subdivision
+
+```java title="Subdividing a Sector"
+Sector parent = Sector.fromDegrees(0, 10, 0, 10);
+
+// Split into 4 equal quadrants (NW, NE, SW, SE)
+Sector[] quads = parent.subdivide();
+
+// Split into n x n equal parts
+Sector[] grid = parent.subdivide(4); // 16 sectors in a 4×4 grid
+```
+
+### Center
+
+```java title="Getting the center of a Sector"
+Sector s = Sector.fromDegrees(0, 10, 0, 10);
+// Compute center as a LatLon: midpoint of min/max lat and min/max lon
+LatLon center = new LatLon(
+    Angle.midAngle(s.getMinLatitude(), s.getMaxLatitude()),
+    Angle.midAngle(s.getMinLongitude(), s.getMaxLongitude())
+);
+```
+
+### Constants
+
+| Constant | Value |
+|----------|-------|
+| `Sector.FULL_SPHERE` | `(−90°, +90°, −180°, +180°)` — the entire globe |
+| `Sector.EMPTY_SECTOR` | `(0°, 0°, 0°, 0°)` — degenerate zero-area sector |
+
+<Warning>
+`Sector` does **not** handle dateline crossing. A sector spanning from longitude 170° to −170° (crossing the international date line) must be split into two sectors or handled specially by the caller.
+</Warning>
+
+---
+
+## Vec4
+
+`gov.nasa.worldwind.geom.Vec4` is an immutable 4-component vector with public `double` fields `x`, `y`, `z`, and `w`. It is used for Cartesian 3D points, directions, and homogeneous coordinates in OpenGL-style transformations. The default `w` component is `1.0` for points and `0.0` for directions/normals.
+
+### Construction
+
+```java title="Creating Vec4 instances"
+Vec4 point     = new Vec4(100.0, 200.0, 300.0);       // w defaults to 1.0
+Vec4 direction = new Vec4(1.0, 0.0, 0.0, 0.0);        // explicit w = 0 for direction
+Vec4 same      = new Vec4(1.0, 1.0, 1.0, 1.0);        // all components
+Vec4 scalar    = new Vec4(5.0);                        // (5, 5, 5, 1)
+
+// Public fields
+double xVal = point.x;
+double yVal = point.y;
+double zVal = point.z;
+double wVal = point.w;
+
+// Accessor methods
+double gx = point.getX();
+double gy = point.getY();
+double gz = point.getZ();
+double gw = point.getW();
+```
+
+### Arithmetic Operations
+
+All methods operate on the 3-component (x, y, z) subspace; the `w` component is handled separately.
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `add3` | `Vec4 add3(Vec4 vec4)` | Component-wise addition of x, y, z |
+| `add3` | `Vec4 add3(double x, double y, double z)` | Add raw components |
+| `subtract3` | `Vec4 subtract3(Vec4 vec4)` | Component-wise subtraction |
+| `subtract3` | `Vec4 subtract3(double x, double y, double z)` | Subtract raw components |
+| `dot3` | `double dot3(Vec4 vec4)` | Dot product of the x, y, z components |
+| `cross3` | `Vec4 cross3(Vec4 vec4)` | Cross product (returns direction vector with w=0) |
+| `normalize3` | `Vec4 normalize3()` | Unit vector in the same direction |
+| `getLength3` | `double getLength3()` | Euclidean length of the x, y, z components |
+| `distanceTo3` | `double distanceTo3(Vec4 vec4)` | Euclidean distance between two points |
+
+```java title="Vec4 vector operations"
+Vec4 a = new Vec4(1, 0, 0);
+Vec4 b = new Vec4(0, 1, 0);
+
+Vec4   sum       = a.add3(b);            // (1, 1, 0)
+double dot       = a.dot3(b);            // 0.0 (perpendicular)
+Vec4   cross     = a.cross3(b);          // (0, 0, 1) — Z axis
+Vec4   unit      = new Vec4(3, 4, 0).normalize3(); // (0.6, 0.8, 0)
+double len       = new Vec4(3, 4, 0).getLength3(); // 5.0
+double dist      = a.distanceTo3(b);     // sqrt(2)
+```
+
+### Predefined Constants
+
+| Constant | Value |
+|----------|-------|
+| `Vec4.ZERO` | `(0, 0, 0, 1)` |
+| `Vec4.ONE` | `(1, 1, 1, 1)` |
+| `Vec4.UNIT_X` | `(1, 0, 0, 0)` |
+| `Vec4.UNIT_Y` | `(0, 1, 0, 0)` |
+| `Vec4.UNIT_Z` | `(0, 0, 1, 0)` |
+| `Vec4.UNIT_NEGATIVE_X` | `(-1, 0, 0, 0)` |
+| `Vec4.INFINITY` | `(+∞, +∞, +∞, 0)` |
+
+---
+
+## Matrix
+
+`gov.nasa.worldwind.geom.Matrix` is an immutable 4×4 row-major transformation matrix. Its 16 components are exposed as public `double` fields named `m11` through `m44`. It is used for affine transformations, model/view/projection matrices, and coordinate-system transforms.
+
+### Factory Methods
+
+```java title="Constructing Matrix instances"
+// Identity
+Matrix identity = Matrix.IDENTITY;
+
+// Translation
+Matrix t = Matrix.fromTranslation(10.0, 20.0, 30.0);
+Matrix tv = Matrix.fromTranslation(new Vec4(10, 20, 30));
+
+// Scale
+Matrix s1 = Matrix.fromScale(2.0);                     // uniform
+Matrix s2 = Matrix.fromScale(2.0, 3.0, 4.0);           // non-uniform
+Matrix s3 = Matrix.fromScale(new Vec4(2, 3, 4, 0));
+
+// Rotation (each method expects Angle values)
+Matrix rx = Matrix.fromRotationX(Angle.fromDegrees(45));
+Matrix ry = Matrix.fromRotationY(Angle.fromDegrees(45));
+Matrix rz = Matrix.fromRotationZ(Angle.fromDegrees(45));
+Matrix rxyz = Matrix.fromRotationXYZ(
+    Angle.fromDegrees(10),
+    Angle.fromDegrees(20),
+    Angle.fromDegrees(30)
+);
+
+// Rotation around an arbitrary axis
+Matrix ra = Matrix.fromAxisAngle(Angle.fromDegrees(45), Vec4.UNIT_Z);
+
+// View and projection matrices
+Matrix view = Matrix.fromViewLookAt(eyePt, centerPt, upVec);
+Matrix proj = Matrix.fromPerspective(
+    Angle.fromDegrees(60), 1920, 1080, 1.0, 100000.0
+);
+```
+
+### Multiplication and Inverse
+
+```java title="Multiplying and inverting matrices"
+Matrix a = Matrix.fromRotationZ(Angle.fromDegrees(45));
+Matrix b = Matrix.fromTranslation(10, 0, 0);
+
+// Combine transforms: a then b (post-multiply)
+Matrix combined = a.multiply(b);
+
+// Scale individual components
+Matrix scaled = a.multiplyComponents(2.0);
+
+// Compute the inverse (returns null if non-invertible)
+Matrix inv = combined.getInverse();
+```
+
+### Extracting Rotation Angles
+
+```java title="Decomposing a rotation matrix"
+Matrix rot = Matrix.fromRotationXYZ(
+    Angle.fromDegrees(10),
+    Angle.fromDegrees(20),
+    Angle.fromDegrees(30)
+);
+
+Angle rx = rot.getRotationX(); // ~10°
+Angle ry = rot.getRotationY(); // ~20°
+Angle rz = rot.getRotationZ(); // ~30°
+```
+
+### Surface Orientation
+
+```java title="Computing a local coordinate frame on the globe surface"
+// Globe provides computeSurfaceOrientationAtPosition which returns a Matrix
+// that maps local (East, North, Up) axes at a geographic position
+Matrix enuTransform = globe.computeSurfaceOrientationAtPosition(
+    Angle.fromDegrees(40.0),
+    Angle.fromDegrees(-75.0),
+    0.0
+);
+
+// Apply to a direction vector to convert from local to world-Cartesian
+Vec4 worldDir = enuTransform.transformDirection(Vec4.UNIT_Y); // North in world space
+```
+
+<Tip>
+`Matrix.IDENTITY` is a pre-allocated constant — use it instead of `new Matrix(...)` whenever you need a no-op transform.
+</Tip>
+
+---
+
+## Line
+
+`gov.nasa.worldwind.geom.Line` is an immutable ray defined by an **origin** point (`Vec4`) and a **direction** vector (`Vec4`). It models a ray with infinite extent in the positive direction and is used primarily for picking, intersection tests, and terrain queries.
+
+### Construction
+
+```java title="Creating Line instances"
+Vec4 origin    = new Vec4(0, 0, 1000);
+Vec4 direction = new Vec4(0, 0, -1).normalize3(); // pointing down
+
+Line ray = new Line(origin, direction);
+
+// Create from two endpoint positions (direction = pb - pa, not normalized)
+Vec4 pa = new Vec4(0, 0, 0);
+Vec4 pb = new Vec4(1, 1, 1);
+Line seg = Line.fromSegment(pa, pb);
+```
+
+### Accessors and Point Evaluation
+
+```java title="Querying a Line"
+Vec4 orig = ray.getOrigin();     // the origin point
+Vec4 dir  = ray.getDirection();  // the direction vector
+
+// Point at parametric distance t along the ray: origin + t * direction
+Vec4 p = ray.getPointAt(2.5);
+```
+
+### Nearest-Point Calculations
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `nearestPointTo` | `Vec4 nearestPointTo(Vec4 p)` | Closest point on this ray to an arbitrary point `p` |
+| `nearestPointOnSegment` | `static Vec4 nearestPointOnSegment(Vec4 p0, Vec4 p1, Vec4 p)` | Closest point on a finite segment `[p0, p1]` to point `p` |
+| `nearestIntersectionPoint` | `Vec4 nearestIntersectionPoint(Intersection[] intersections)` | Among multiple intersections, returns the closest to the ray origin |
+
+```java title="Finding the nearest intersection"
+// Cast a pick ray from the camera eye point
+Line pickRay = view.computeRayFromScreenPoint(mouseX, mouseY);
+
+// Intersect with the globe ellipsoid
+Intersection[] hits = globe.intersect(pickRay, 0);
+
+// Get the closest hit to the eye
+Vec4 nearest = pickRay.nearestIntersectionPoint(hits);
+Position pos = globe.computePositionFromPoint(nearest);
+```
+
+<Note>
+`Line` has no `intersectWithTriangle` method directly. Triangle-ray intersections are handled by `Globe.intersect(Triangle, double)` and by `HighResolutionTerrain`, which tests against the tessellated terrain mesh. The `Line` class itself provides the ray and nearest-point utilities.
+</Note>
+
+---
+
+## Extent and Intersection
+
+### Extent
+
+`gov.nasa.worldwind.geom.Extent` is an interface representing a volume that encloses one or more objects. Implementations include `Sphere`, `Box`, and `Cylinder`. It is primarily used for visibility culling (frustum tests) and ray intersection tests.
+
+#### Key Methods
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `getCenter` | `Vec4 getCenter()` | Center of the bounding volume |
+| `getRadius` | `double getRadius()` | Bounding radius |
+| `getDiameter` | `double getDiameter()` | Bounding diameter |
+| `intersects(Frustum)` | `boolean intersects(Frustum frustum)` | Tests if this extent overlaps a view frustum |
+| `intersects(Line)` | `boolean intersects(Line line)` | Tests if an infinite line passes through this volume |
+| `intersect(Line)` | `Intersection[] intersect(Line line)` | Returns all intersection points with a line |
+| `intersects(Plane)` | `boolean intersects(Plane plane)` | Tests if a plane cuts this volume |
+| `getEffectiveRadius(Plane)` | `double getEffectiveRadius(Plane plane)` | Effective extent radius relative to a plane |
+| `getProjectedArea(View)` | `double getProjectedArea(View view)` | Screen-space projected area (pixels²) |
+
+```java title="Using Extent for frustum culling"
+// Layers and renderables expose an extent for LOD and culling
+Extent layerExtent = someRenderable.getExtent(dc);
+
+if (layerExtent != null && layerExtent.intersects(dc.getView().getFrustumInModelCoordinates())) {
+    // This renderable is potentially visible — proceed with rendering
+    someRenderable.render(dc);
+}
+```
+
+### Intersection
+
+`gov.nasa.worldwind.geom.Intersection` is an immutable record of a single intersection point between a ray (or line) and a surface. It carries the Cartesian point, an optional `Position`, a tangency flag, and an optional parametric distance along the intersecting geometry.
+
+#### Constructors
+
+```java title="Intersection constructors"
+// Minimal: just a point and tangency flag
+Intersection i1 = new Intersection(new Vec4(x, y, z), false);
+
+// With parametric length along the line
+Intersection i2 = new Intersection(new Vec4(x, y, z), 1.5, false);
+
+// Full: point, geographic position, tangency flag, and associated object
+Intersection i3 = new Intersection(point, position, isTangent, someObject);
+```
+
+#### Key Methods
+
+| Method | Return Type | Description |
+|--------|-------------|-------------|
+| `getIntersectionPoint()` | `Vec4` | The Cartesian intersection point |
+| `getIntersectionPosition()` | `Position` | The geographic position (if set) |
+| `getIntersectionLength()` | `Double` | Parametric distance along the intersecting line (may be null) |
+| `isTangent()` | `boolean` | True if the ray is tangent to the surface at this point |
+| `getObject()` | `Object` | Associated renderable or data object |
+| `setIntersectionPosition(Position)` | `void` | Set the geographic position after creation |
+| `sort(Vec4, List, List)` | `static Queue<Intersection>` | Merge and sort two intersection lists by distance from a reference point |
+
+```java title="Working with terrain intersections"
+// Test line-of-sight from position A to position B using high-resolution terrain
+HighResolutionTerrain terrain = new HighResolutionTerrain(globe, 10.0);
+
+Position pA = Position.fromDegrees(37.0, -122.0, 1000.0);
+Position pB = Position.fromDegrees(37.1, -121.9, 1000.0);
+
+Intersection[] hits = terrain.intersect(pA, pB);
+
+if (hits != null && hits.length > 0) {
+    System.out.println("Line of sight is blocked.");
+    Vec4     blockPoint  = hits[0].getIntersectionPoint();
+    Position blockPos    = globe.computePositionFromPoint(blockPoint);
+    boolean  isTangent   = hits[0].isTangent();
+} else {
+    System.out.println("Clear line of sight.");
+}
+```
+
+<Tip>
+Use `Intersection.sort(refPoint, listA, listB)` to merge and sort intersection results from multiple objects by increasing distance from the camera — useful when compositing picking results from different layers.
+</Tip>

@@ -1,0 +1,245 @@
+---
+title: "Data Raster API: Readers, Writers, and Tile Producers"
+sidebarTitle: "Data Raster"
+description: "Reference for DataRaster, DataRasterReader, DataRasterWriter, TiledRasterProducer, and GDAL integration in NASA WorldWind Java."
+---
+
+The `gov.nasa.worldwind.data` package implements a pipeline for reading, sub-sampling, and writing geospatial raster data. The pipeline starts with a `DataRasterReader` that decodes source files into `DataRaster` objects, optionally resamples them via `getSubRaster()`, and then either passes them to a layer or writes them to a tile cache using `TiledRasterProducer` subclasses. All data objects implement `AVList` for flexible parameter passing throughout the pipeline.
+
+---
+
+## `DataRaster`
+
+`DataRaster` represents a single raster dataset — either imagery or elevation — within a geographic `Sector`. It extends `AVList` and `Disposable`.
+
+```java title="DataRaster interface"
+public interface DataRaster extends AVList, Disposable {
+
+    // Dimensions in raster (pixel) units
+    int getWidth();
+    int getHeight();
+
+    // Geographic extent
+    Sector getSector();
+
+    // Copy this raster into another raster (same or different resolution)
+    void drawOnTo(DataRaster canvas);
+
+    // Sub-raster extraction using an AVList carrying AVKey.WIDTH,
+    // AVKey.HEIGHT, and AVKey.SECTOR
+    DataRaster getSubRaster(AVList params);
+
+    // Convenience overload with explicit width, height, sector
+    DataRaster getSubRaster(int width, int height, Sector sector, AVList params);
+}
+```
+
+<Note>
+  `getSubRaster()` always returns a raster conforming to EPSG:4326 (geographic / WGS84), regardless of the source raster's native projection. If the input sector extends beyond the raster's own sector, the returned raster will be partially filled or null.
+</Note>
+
+---
+
+## `DataRasterReader`
+
+`DataRasterReader` decodes a data source into one or more `DataRaster` objects. The source can be a `File`, `String` path, `InputStream`, or `URL`.
+
+```java title="DataRasterReader interface"
+public interface DataRasterReader extends AVList {
+
+    // Human-readable description (informational)
+    String getDescription();
+    String[] getSuffixes();
+
+    // Test whether this reader handles the given source
+    boolean canRead(Object source, AVList params);
+
+    // Read source data into DataRaster array
+    DataRaster[] read(Object source, AVList params) throws IOException;
+
+    // Read only metadata (no pixel data allocated)
+    AVList readMetadata(Object source, AVList params) throws IOException;
+
+    // Content-type hints
+    boolean isImageryRaster(Object source, AVList params);
+    boolean isElevationsRaster(Object source, AVList params);
+}
+```
+
+### `BasicDataRasterReaderFactory`
+
+Use this factory to automatically select the right reader for an unknown source format:
+
+```java title="BasicDataRasterReaderFactory — automatic reader selection"
+DataRasterReaderFactory factory = (DataRasterReaderFactory)
+    WorldWind.createConfigurationComponent(AVKey.DATA_RASTER_READER_FACTORY_CLASS_NAME);
+
+File sourceFile = new File("terrain.tif");
+DataRasterReader reader = factory.findReaderFor(sourceFile, null);
+
+if (reader != null && reader.canRead(sourceFile, null)) {
+    DataRaster[] rasters = reader.read(sourceFile, null);
+    // rasters[0] is typically the primary band
+}
+```
+
+---
+
+## `DataRasterWriter`
+
+`DataRasterWriter` serialises a `DataRaster` to a file in a specified format.
+
+```java title="DataRasterWriter interface"
+public interface DataRasterWriter {
+
+    // Check if this writer supports the raster + format combination
+    boolean canWrite(DataRaster raster, String formatSuffix, File file);
+
+    // Write; overwrites existing file contents
+    void write(DataRaster raster, String formatSuffix, File file)
+        throws IOException;
+}
+```
+
+---
+
+## Concrete Readers
+
+| Class | Handles | Notes |
+|---|---|---|
+| `BILRasterReader` | `.bil` / `.bip` / `.bsq` band-interleaved elevation | Requires a matching `.hdr` sidecar file. |
+| `GeotiffRasterReader` | `.tif` / `.tiff` GeoTIFF | Imagery and elevation; reads embedded georeferencing. |
+| `DTEDRasterReader` | `.dt0` / `.dt1` / `.dt2` DTED | Defense Terrain Elevation Data levels 0–2. |
+| `GDALDataRasterReader` | Many formats via GDAL | Requires native GDAL libraries; see below. |
+| `ImageIORasterReader` | JPEG, PNG, BMP, GIF, and any format registered with `javax.imageio` | Reads image formats; no elevation. |
+| `DDSRasterReader` | `.dds` DirectDraw Surface | Pre-compressed GPU texture format. |
+| `RPFRasterReader` | CADRG / CIB frame files | Raster Product Format military maps. |
+
+<Warning>
+  `GDALDataRasterReader` and `GDALDataRaster` require the native GDAL dynamic libraries to be present on the library path. Without them, the reader will silently fail. The reader supports dozens of additional formats including HDF, NetCDF, ECW, MrSID, and JP2000 when the corresponding GDAL drivers are available.
+</Warning>
+
+---
+
+## `TiledRasterProducer`
+
+`TiledRasterProducer` converts source `DataRaster` objects into WorldWind's hierarchical tile-cache format (`LevelSet`). It runs the tiling operation asynchronously on a thread pool.
+
+```java title="TiledRasterProducer hierarchy"
+// Abstract base
+abstract class TiledRasterProducer extends AbstractDataStoreProducer { ... }
+
+// Concrete subclasses
+class TiledImageProducer     extends TiledRasterProducer { ... }  // imagery tiles
+class TiledElevationProducer extends TiledRasterProducer { ... }  // elevation tiles
+```
+
+Key `DataStoreProducer` lifecycle methods:
+
+```java title="TiledRasterProducer — production lifecycle"
+// Configure via AVList params (tile width, height, level-zero delta, etc.)
+AVListImpl params = new AVListImpl();
+params.setValue(AVKey.DATASET_NAME,          "MyImagery");
+params.setValue(AVKey.DATA_CACHE_NAME,       "Earth/MyImagery");
+params.setValue(AVKey.SERVICE_NAME,          AVKey.SERVICE_NAME_LOCAL_RASTER_SERVER);
+params.setValue(AVKey.TILE_WIDTH,            512);
+params.setValue(AVKey.TILE_HEIGHT,           512);
+params.setValue(AVKey.FORMAT_SUFFIX,         ".dds");
+params.setValue(AVKey.NUM_LEVELS,            14);
+params.setValue(AVKey.LEVEL_ZERO_TILE_DELTA,
+    new LatLon(Angle.fromDegrees(36), Angle.fromDegrees(36)));
+
+TiledImageProducer producer = new TiledImageProducer();
+producer.setStoreParameters(params);
+
+// Add source data rasters
+producer.offerDataSource(new File("source_image.tif"), null);
+
+// Begin asynchronous production (throws Exception on failure to start)
+try {
+    producer.startProduction();
+} catch (Exception e) {
+    e.printStackTrace();
+}
+
+// Check progress
+double progress = producer.getProgress(); // 0.0 – 1.0
+
+// Cancel at any time
+producer.stopProduction();
+```
+
+---
+
+## `BasicRasterServer`
+
+`BasicRasterServer` serves sub-rasters from a configured set of source `DataRaster` objects on demand. It is used internally by `LocalRasterServerLayer`.
+
+```java title="BasicRasterServer — serving on-demand rasters"
+BasicRasterServer server = new BasicRasterServer(configSource, params);
+// configSource is a DOM Element or URL pointing to raster server config XML
+// The server handles getSubRaster() requests automatically
+```
+
+---
+
+## GDAL Integration
+
+`GDALDataRaster` wraps a single GDAL dataset and implements the `DataRaster` interface.
+
+```java title="GDALDataRaster — reading via GDAL"
+// Ensure native GDAL libraries are loaded before using
+// (WorldWind attempts automatic loading from GDAL_PATH)
+
+GDALDataRasterReader gdalReader = new GDALDataRasterReader();
+File ecwFile = new File("satellite.ecw");
+
+if (gdalReader.canRead(ecwFile, null)) {
+    DataRaster[] rasters = gdalReader.read(ecwFile, null);
+    GDALDataRaster gdalRaster = (GDALDataRaster) rasters[0];
+
+    // Extract a sub-region at target resolution
+    AVList subParams = new AVListImpl();
+    subParams.setValue(AVKey.WIDTH,  1024);
+    subParams.setValue(AVKey.HEIGHT, 1024);
+    subParams.setValue(AVKey.SECTOR,
+        Sector.fromDegrees(37.0, 38.0, -122.0, -121.0));
+    DataRaster sub = gdalRaster.getSubRaster(subParams);
+}
+```
+
+---
+
+## Complete Example: Reading a GeoTIFF
+
+```java title="Reading a GeoTIFF and querying its metadata"
+File tiffFile = new File("dem_30m.tif");
+GeotiffRasterReader reader = new GeotiffRasterReader();
+
+if (reader.canRead(tiffFile, null)) {
+
+    // Read metadata only (fast, no pixel allocation)
+    AVList meta = reader.readMetadata(tiffFile, null);
+    Sector sector = (Sector) meta.getValue(AVKey.SECTOR);
+    System.out.println("Coverage: " + sector);
+
+    // Determine content type
+    boolean isElev = reader.isElevationsRaster(tiffFile, null);
+    System.out.println("Is elevation: " + isElev);
+
+    // Read full raster
+    DataRaster[] rasters = reader.read(tiffFile, null);
+    DataRaster dem = rasters[0];
+
+    System.out.printf("Size: %d × %d%n", dem.getWidth(), dem.getHeight());
+
+    // Extract a sub-region
+    DataRaster sub = dem.getSubRaster(256, 256,
+        Sector.fromDegrees(37.0, 37.5, -122.0, -121.5),
+        new AVListImpl());
+
+    // Clean up
+    dem.dispose();
+    if (sub != null) sub.dispose();
+}
+```

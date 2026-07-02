@@ -1,0 +1,236 @@
+---
+title: "Configuring NASA WorldWind Java with the Configuration API"
+sidebarTitle: "Configuration API"
+description: "Use the WorldWind Configuration class to customize SDK behavior: file store paths, model class names, retrieval services, network settings, and OpenGL capabilities."
+---
+
+The `Configuration` class is WorldWind Java's central registry for all start-up settings. It reads `config/worldwind.xml` on first use, populates an internal `Properties` map with class names, cache sizes, retrieval timeouts, and view parameters, and exposes those values through a set of typed static accessor methods. Every internal WorldWind object — the globe, layers, retrieval service, scene controller — queries `Configuration` to decide which implementation class to instantiate. By writing values into `Configuration` before creating any WorldWind object you can substitute your own implementations, change file-store paths, tune network timeouts, and adjust OpenGL capabilities without editing XML files or subclassing anything.
+
+## Configuration API
+
+All read and write methods on `Configuration` are `static` and `synchronized`, making them safe to call from any thread. The class is a singleton whose instance is never exposed publicly; all interaction happens through static helpers.
+
+### Reading values
+
+| Method | Returns | Notes |
+|---|---|---|
+| `Configuration.getStringValue(String key)` | `String` or `null` | Returns the raw string value for a key. |
+| `Configuration.getStringValue(String key, String defaultValue)` | `String` | Returns `defaultValue` when the key is absent. |
+| `Configuration.getIntegerValue(String key)` | `Integer` or `null` | Parses the stored string as an `int`. |
+| `Configuration.getIntegerValue(String key, Integer defaultValue)` | `Integer` | Returns `defaultValue` on parse failure or absence. |
+| `Configuration.getLongValue(String key)` | `Long` or `null` | Parses the stored string as a `long`. |
+| `Configuration.getLongValue(String key, Long defaultValue)` | `Long` | Returns `defaultValue` on parse failure or absence. |
+| `Configuration.getDoubleValue(String key)` | `Double` or `null` | Parses the stored string as a `double`. |
+| `Configuration.getDoubleValue(String key, Double defaultValue)` | `Double` | Returns `defaultValue` on parse failure or absence. |
+| `Configuration.getBooleanValue(String key)` | `Boolean` or `null` | `"1"` / strings starting with `"t"` or `"T"` → `true`; `"0"` / `"f"` / `"F"` → `false`. |
+| `Configuration.getBooleanValue(String key, Boolean defaultValue)` | `Boolean` | Returns `defaultValue` when the key is absent. |
+
+### Writing and inspecting values
+
+| Method | Description |
+|---|---|
+| `Configuration.setValue(String key, Object value)` | Stores `value.toString()` under `key`. Adds the key if absent, replaces the value if present. |
+| `Configuration.hasKey(String key)` | Returns `true` if the key exists in the properties map. |
+| `Configuration.removeKey(String key)` | Removes the key and its value from the map. |
+
+```java title="Reading and writing configuration values"
+import gov.nasa.worldwind.Configuration;
+import gov.nasa.worldwind.avlist.AVKey;
+
+// Read the current data file store class name
+String storeClass = Configuration.getStringValue(AVKey.DATA_FILE_STORE_CLASS_NAME);
+
+// Override the texture cache size (500 MB expressed in bytes)
+Configuration.setValue(AVKey.TEXTURE_CACHE_SIZE, 500_000_000L);
+
+// Read back as a Long with a safe default
+long textureCacheBytes = Configuration.getLongValue(
+    AVKey.TEXTURE_CACHE_SIZE,
+    500_000_000L   // default if key is absent
+);
+
+// Suppress VBO usage
+Configuration.setValue(AVKey.VBO_USAGE, false);
+```
+
+<Tip>
+Call `Configuration.setValue()` **before** constructing any WorldWind object such as `WorldWindowGLCanvas`. Configuration values are not retroactive — objects read the registry once at construction time and cache the result.
+</Tip>
+
+## Configuration Documents
+
+In addition to programmatic overrides, WorldWind reads two XML documents at startup:
+
+1. **Primary document** — `config/worldwind.xml` on the classpath (overridden with the Java system property `gov.nasa.worldwind.config.document`).
+2. **Application override document** — specified via the Java system property `gov.nasa.worldwind.app.config.document`. WorldWind merges only the keys present in this file, leaving all other defaults intact.
+
+To insert an additional XML document at runtime — giving it the highest priority in the search order — call `Configuration.insertConfigurationDocument(String fileName)`:
+
+```java title="Inserting a custom configuration document"
+// Must be called before creating any WorldWind object.
+// The file must be accessible on the classpath or as a URL.
+Configuration.insertConfigurationDocument("myapp/MyWorldWindConfig.xml");
+```
+
+The XML document must follow the `WorldWindConfiguration` schema. Every override is expressed as a `<Property>` element with `name` and `value` attributes nested inside a `<WorldWindConfiguration>` root.
+
+## Key AVKey Constants
+
+`AVKey` is an interface in `gov.nasa.worldwind.avlist` whose `final String` fields provide the canonical key names accepted by `Configuration`. The most important configuration keys are:
+
+| AVKey Constant | String value | Purpose |
+|---|---|---|
+| `AVKey.DATA_FILE_STORE_CLASS_NAME` | `gov.nasa.worldwind.avkey.DataFileStoreClassName` | Fully-qualified class name of the `FileStore` implementation (default: `gov.nasa.worldwind.cache.BasicDataFileStore`). |
+| `AVKey.DATA_FILE_STORE_CONFIGURATION_FILE_NAME` | `gov.nasa.worldwind.avkey.DataFileStoreConfigurationFileName` | Path to the file-store XML configuration (default: `config/DataFileStore.xml`). |
+| `AVKey.RETRIEVAL_SERVICE_CLASS_NAME` | `gov.nasa.worldwind.avkey.RetrievalServiceClassName` | Class name for the tile/image retrieval service (default: `gov.nasa.worldwind.retrieve.BasicRetrievalService`). |
+| `AVKey.TASK_SERVICE_CLASS_NAME` | `gov.nasa.worldwind.avkey.TaskServiceClassName` | Class name for the general task thread pool (default: `gov.nasa.worldwind.util.ThreadedTaskService`). |
+| `AVKey.MEMORY_CACHE_SET_CLASS_NAME` | `gov.nasa.worldwind.avkey.MemoryCacheSetClassName` | Class name for the `MemoryCacheSet` implementation (default: `gov.nasa.worldwind.cache.BasicMemoryCacheSet`). |
+| `AVKey.MODEL_CLASS_NAME` | `gov.nasa.worldwind.avkey.ModelClassName` | Default 3-D model class (default: `gov.nasa.worldwind.BasicModel`). |
+| `AVKey.LAYERS_CLASS_NAMES` | `gov.nasa.worldwind.avkey.LayerClassNames` | Comma-separated list of layer class names for the default model. |
+| `AVKey.GLOBE_CLASS_NAME` | `gov.nasa.worldwind.avkey.GlobeClassName` | Globe implementation (default: `gov.nasa.worldwind.globes.Earth`). |
+| `AVKey.SCENE_CONTROLLER_CLASS_NAME` | `gov.nasa.worldwind.avkey.SceneControllerClassName` | Scene controller implementation (default: `gov.nasa.worldwind.StereoOptionSceneController`). |
+| `AVKey.TEXTURE_CACHE_SIZE` | `gov.nasa.worldwind.avkey.TextureCacheSize` | GPU texture cache capacity in bytes (default: `500000000`, i.e. 500 MB). |
+
+## Platform Detection
+
+`Configuration` exposes a set of static boolean helpers so that application code can branch on the current operating system without inspecting `System.getProperty("os.name")` directly:
+
+```java title="Platform detection helpers"
+if (Configuration.isMacOS()) {
+    // macOS-specific initialization
+} else if (Configuration.isWindowsOS()) {
+    // Windows-specific initialization
+} else if (Configuration.isLinuxOS()) {
+    // Linux-specific initialization
+}
+
+float javaVersion = Configuration.getJavaVersion();
+System.out.println("Running on Java spec version: " + javaVersion);
+```
+
+The full set of platform methods is:
+
+- `Configuration.isMacOS()`
+- `Configuration.isWindowsOS()`
+- `Configuration.isWindowsXPOS()`
+- `Configuration.isWindowsVistaOS()`
+- `Configuration.isWindows7OS()`
+- `Configuration.isLinuxOS()`
+- `Configuration.isUnixOS()`
+- `Configuration.isSolarisOS()`
+- `Configuration.getJavaVersion()` — returns a `float` parsed from `java.specification.version`
+
+## Path Utilities
+
+Four static helpers return standard filesystem paths relative to the current user and runtime environment. These are used internally by `BasicDataFileStore` when resolving cache locations:
+
+| Method | Returns |
+|---|---|
+| `Configuration.getCurrentWorkingDirectory()` | Absolute path of the JVM's working directory (`user.dir`). |
+| `Configuration.getUserHomeDirectory()` | Absolute path of the current user's home directory (`user.home`). |
+| `Configuration.getSystemTempDirectory()` | Absolute path of the OS temp directory (`java.io.tmpdir`). |
+| `Configuration.getCurrentUserAppDataDirectory()` | `~/Library/Application Support` on macOS; `~\Application Data` on Windows; `~/` on Linux/Unix/Solaris. |
+
+```java title="Using path utilities"
+String cacheBase = Configuration.getCurrentUserAppDataDirectory();
+// On Linux: /home/username
+// On macOS: /Users/username/Library/Application Support
+// On Windows: C:\Users\username\Application Data
+```
+
+## OpenGL Configuration
+
+Two static methods on `Configuration` bridge WorldWind's startup code and JOGL's profile-selection API:
+
+```java title="OpenGL profile and capabilities"
+import com.jogamp.opengl.GLCapabilities;
+import com.jogamp.opengl.GLProfile;
+
+// Returns the highest OpenGL compatibility profile available on
+// the current hardware, favouring hardware over software rasterization.
+// With JOGL v2.4 this is the maximum fixed-function profile:
+//   - OpenGL compatibility 4.x, or
+//   - OpenGL compatibility 3.x, or
+//   - OpenGL 1.x–3.0
+GLProfile profile = Configuration.getMaxCompatibleGLProfile();
+
+// Returns a GLCapabilities instance configured for WorldWind:
+//   - 8 bits each of RGBA
+//   - 24-bit depth buffer
+//   - double-buffered
+//   - device stereo if System property "gov.nasa.worldwind.stereo.mode" == "device"
+GLCapabilities caps = Configuration.getRequiredGLCapabilities();
+```
+
+`WorldWindowGLCanvas` and `WorldWindowGLJPanel` both call `getRequiredGLCapabilities()` internally when creating their OpenGL surface. You do not need to call these methods yourself unless you are building a custom OpenGL canvas.
+
+## Overriding the Model Class Name
+
+The following snippet shows the complete pattern for replacing a built-in WorldWind implementation before the SDK initializes:
+
+```java title="Overriding the default model and file store"
+import gov.nasa.worldwind.Configuration;
+import gov.nasa.worldwind.avlist.AVKey;
+
+public class MyApp {
+    public static void main(String[] args) {
+
+        // Replace the default model with a custom subclass
+        Configuration.setValue(
+            AVKey.MODEL_CLASS_NAME,
+            "com.example.myapp.MyCustomModel"
+        );
+
+        // Point the data file store at a custom config
+        Configuration.setValue(
+            AVKey.DATA_FILE_STORE_CONFIGURATION_FILE_NAME,
+            "com/example/myapp/MyDataFileStore.xml"
+        );
+
+        // Now safe to create the WorldWindow
+        ApplicationTemplate.start("My App", AppFrame.class);
+    }
+}
+```
+
+## Custom Configuration XML
+
+An application override document lets you change any subset of WorldWind's defaults without replacing `worldwind.xml`. The root element must be `<WorldWindConfiguration>` and each setting is a `<Property>` element:
+
+```xml title="myapp/MyWorldWindConfig.xml"
+<?xml version="1.0" encoding="UTF-8"?>
+<WorldWindConfiguration version="1">
+
+    <!-- Use a custom model class -->
+    <Property name="gov.nasa.worldwind.avkey.ModelClassName"
+              value="com.example.myapp.MyCustomModel"/>
+
+    <!-- Limit the retrieval thread pool to 2 threads -->
+    <Property name="gov.nasa.worldwind.avkey.RetrievalPoolSize" value="2"/>
+
+    <!-- Increase the GPU texture cache to 1 GB -->
+    <Property name="gov.nasa.worldwind.avkey.TextureCacheSize" value="1000000000"/>
+
+    <!-- Put the data file store config on the classpath -->
+    <Property name="gov.nasa.worldwind.avkey.DataFileStoreConfigurationFileName"
+              value="com/example/myapp/MyDataFileStore.xml"/>
+
+</WorldWindConfiguration>
+```
+
+Load this document before any WorldWind object is created:
+
+```java title="Loading the override document at application startup"
+// Option A: via the Java system property (set before any WorldWind class loads)
+System.setProperty(
+    "gov.nasa.worldwind.app.config.document",
+    "myapp/MyWorldWindConfig.xml"
+);
+
+// Option B: programmatic insertion (highest priority; overrides all other docs)
+Configuration.insertConfigurationDocument("myapp/MyWorldWindConfig.xml");
+```
+
+<Note>
+The file passed to `insertConfigurationDocument()` is resolved via `WWXML.openDocument()`, which searches the classpath first and then tries the string as a file path or URL. Place the XML file inside your application JAR or on the classpath to ensure portability.
+</Note>

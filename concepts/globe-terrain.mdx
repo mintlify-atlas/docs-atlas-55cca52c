@@ -1,0 +1,252 @@
+---
+title: "Globe and Terrain in WorldWind Java"
+sidebarTitle: "Globe & Terrain"
+description: "WorldWind Java renders terrain using tessellation and elevation models. Learn how the Globe, ElevationModel, Tessellator, and HighResolutionTerrain classes work together."
+---
+
+WorldWind Java's 3D terrain system is built from three interlocking pieces: the `Globe`, which defines the planet's shape and provides elevation data; the `Tessellator`, which subdivides the visible surface into a variable-resolution triangle mesh each frame; and the `ElevationModel`, which supplies the actual elevation samples that give the mesh its topographic shape. Together they produce the smooth, multi-resolution terrain that adapts in real time as the camera moves. For analysis tasks that require precise terrain queries — line-of-sight, terrain profiles, surface drape — the `HighResolutionTerrain` class provides a separate, always-maximum-resolution path independent of the rendering tessellator.
+
+## The Globe Interface
+
+`Globe` (`gov.nasa.worldwind.globes.Globe`) is the foundation of the terrain system. It owns the `ElevationModel` and the `Tessellator`, and it provides coordinate-conversion methods used throughout the rendering pipeline.
+
+```java Globe interface — key method signatures
+// Coordinate conversion: geodetic ↔ Cartesian (Vec4)
+Vec4 computePointFromPosition(Angle latitude, Angle longitude, double metersElevation);
+Vec4 computePointFromPosition(LatLon latLon, double metersElevation);
+Vec4 computePointFromPosition(Position position);
+Vec4 computePointFromLocation(LatLon location);
+
+// Convert 3D Cartesian back to a geodetic Position
+Position computePositionFromPoint(Vec4 point);
+
+// Ellipsoidal variants (work in ellipsoidal space regardless of 2D/3D projection)
+Vec4 computeEllipsoidalPointFromPosition(Angle latitude, Angle longitude, double metersElevation);
+Position computePositionFromEllipsoidalPoint(Vec4 ellipsoidalPoint);
+
+// Surface normals and orientation frames
+Vec4 computeSurfaceNormalAtLocation(Angle latitude, Angle longitude);
+Matrix computeSurfaceOrientationAtPosition(Angle latitude, Angle longitude, double metersElevation);
+
+// Elevation queries (best resolution currently available in memory)
+double getElevation(Angle latitude, Angle longitude);
+double getElevations(Sector sector, List<? extends LatLon> latlons,
+                     double targetResolution, double[] elevations);
+
+// Globe geometry
+double getEquatorialRadius();
+double getPolarRadius();
+double getMaximumRadius();
+double getRadiusAt(Angle latitude, Angle longitude);
+double getEccentricitySquared();
+double getMaxElevation();
+double getMinElevation();
+
+// Elevation model and tessellator access
+ElevationModel getElevationModel();
+void setElevationModel(ElevationModel elevationModel);
+Tessellator getTessellator();
+```
+
+The default globe configured in `worldwind.xml` is `Earth` (`gov.nasa.worldwind.globes.Earth`), which extends `EllipsoidalGlobe` using WGS84 parameters. WorldWind also ships `FlatGlobe` for 2D flat-map projections; because the `Globe` is swappable at runtime, the same application can toggle between 3D globe and 2D flat-map views by replacing `model.setGlobe(...)`.
+
+## Elevation Models
+
+The `ElevationModel` interface (`gov.nasa.worldwind.globes.ElevationModel`) supplies elevation samples to the tessellator and to direct queries. Models often approximate elevations at multiple resolutions; the model returns the best available data for the current view.
+
+```java ElevationModel interface — key method signatures
+String getName();
+void setName(String name);
+
+// Single-point elevation query
+double getElevation(Angle latitude, Angle longitude);
+double getUnmappedElevation(Angle latitude, Angle longitude); // ignores missing-data replacement
+
+// Bulk elevation query for a sector
+double getElevations(Sector sector, List<? extends LatLon> latlons,
+                     double targetResolution, double[] buffer);
+
+// Resolution
+double getBestResolution(Sector sector);
+double getDetailHint(Sector sector);
+
+// Coverage
+int intersects(Sector sector);  // 0=full, 1=partial, -1=none
+boolean contains(Angle latitude, Angle longitude);
+
+// Missing-data handling
+void setMissingDataSignal(double flag);
+double getMissingDataSignal();
+double getMissingDataReplacement();
+void setMissingDataReplacement(double missingDataReplacement);
+
+// Network retrieval
+boolean isNetworkRetrievalEnabled();
+void setNetworkRetrievalEnabled(boolean networkRetrievalEnabled);
+```
+
+### ElevationModel Implementations
+
+| Class | Description |
+|---|---|
+| `BasicElevationModel` | Loads elevation tiles from a WMS server or local tile pyramid. Configured via XML (see `config/Earth/EarthElevations2.xml`). |
+| `CompoundElevationModel` | Stacks multiple `ElevationModel` instances. The model with the finest resolution takes precedence for any given location. |
+| `LocalElevationModel` | Reads elevation rasters directly from local files (GeoTIFF, BIL, etc.). Suitable for offline or custom datasets. |
+| `ZeroElevationModel` | Always returns zero elevation. Used with `FlatGlobe` for 2D projections where terrain relief is not needed. |
+| `WMSBasicElevationModel` | A `BasicElevationModel` specialization for OGC WMS 1.1 and 1.3 elevation sources. |
+| `WCSElevationModel` | Retrieves elevation data from an OGC Web Coverage Service (WCS). |
+
+### CompoundElevationModel
+
+`CompoundElevationModel` (`gov.nasa.worldwind.terrain.CompoundElevationModel`) is the standard way to layer elevation sources. The list is automatically sorted from lowest to highest resolution; higher-resolution models override lower-resolution ones for locations they cover.
+
+```java CompoundElevationModel — stacking two elevation sources
+import gov.nasa.worldwind.terrain.*;
+import gov.nasa.worldwind.globes.*;
+
+// Get the globe's current elevation model (typically a CompoundElevationModel)
+Globe globe = wwd.getModel().getGlobe();
+ElevationModel existing = globe.getElevationModel();
+
+// Create a CompoundElevationModel and add the existing model first
+CompoundElevationModel compound = new CompoundElevationModel();
+
+if (existing != null) {
+    compound.addElevationModel(existing);   // lower-res base
+}
+
+// Add a high-resolution local elevation source on top
+LocalElevationModel localDem = new LocalElevationModel();
+localDem.addElevations("data/my_region.tif");  // GeoTIFF or BIL file
+compound.addElevationModel(localDem);           // higher-res; sorts automatically
+
+// Replace the globe's elevation model
+globe.setElevationModel(compound);
+wwd.redraw();
+```
+
+## Tessellation
+
+The `Tessellator` (`gov.nasa.worldwind.terrain.Tessellator`) converts the globe's smooth mathematical surface into a renderable triangle mesh each frame. WorldWind's default implementation is `RectangularTessellator` (`gov.nasa.worldwind.terrain.RectangularTessellator`).
+
+Each frame, `RectangularTessellator`:
+
+1. Determines which parts of the globe are visible in the current view frustum.
+2. Subdivides the visible surface into a grid of `SectorGeometry` tiles. Tiles that are close to the eye or that subtend a large screen area are subdivided to finer levels of detail; distant tiles use coarser geometry.
+3. Queries the `ElevationModel` for each tile's sector and applies the elevation samples as vertex displacements, giving the mesh its topographic shape.
+4. Returns a `SectorGeometryList` that layer renderers use to drape imagery and shapes onto the terrain.
+
+The maximum recursion level is controlled by the `gov.nasa.worldwind.avkey.RectangularTessellatorMaxLevel` configuration property (default 30 levels). Vertical exaggeration can be applied through `SceneController.setVerticalExaggeration(double)`.
+
+## High-Resolution Terrain
+
+`HighResolutionTerrain` (`gov.nasa.worldwind.terrain.HighResolutionTerrain`) provides accurate terrain computations that are independent of the rendering tessellator. While the rendering tessellator dynamically adjusts resolution based on what is visible, `HighResolutionTerrain` always uses the maximum available resolution from the elevation model — blocking if necessary to retrieve data from disk or network.
+
+Use `HighResolutionTerrain` when you need:
+- **Line-of-sight** calculations between two positions
+- **Terrain profiles** along a path
+- **Surface drape** — computing exact surface points for positions that must lie on the terrain
+- Any geometric operation where rendering-quality accuracy is insufficient
+
+```java HighResolutionTerrain — constructors
+// Span the entire globe at the elevation model's best resolution
+HighResolutionTerrain terrain = new HighResolutionTerrain(globe, null);
+
+// Constrain to a sector; specify target resolution in meters; apply vertical exaggeration
+HighResolutionTerrain terrain = new HighResolutionTerrain(
+    globe,
+    Sector.fromDegrees(35.0, 42.0, -120.0, -110.0), // sector
+    10.0,                                             // targetResolution in meters
+    1.0                                               // verticalExaggeration
+);
+```
+
+```java HighResolutionTerrain — line-of-sight intersection
+import gov.nasa.worldwind.geom.*;
+import gov.nasa.worldwind.terrain.*;
+
+Globe globe = wwd.getModel().getGlobe();
+HighResolutionTerrain terrain = new HighResolutionTerrain(globe, null);
+
+// Two geographic positions (altitude = height above ground in meters)
+Position observer = Position.fromDegrees(37.5, -122.1, 10.0);  // 10 m above ground
+Position target   = Position.fromDegrees(37.6, -122.0, 0.0);   // ground level
+
+// Compute terrain intersections between observer and target
+Intersection[] hits = terrain.intersect(observer, target);
+
+if (hits != null && hits.length > 0) {
+    System.out.println("Terrain blocks line of sight at: " + hits[0].getIntersectionPoint());
+} else {
+    System.out.println("Clear line of sight to target.");
+}
+```
+
+<Note>
+`HighResolutionTerrain.intersect()` **blocks** the calling thread while it loads elevation tiles. Always call it from a background thread (e.g. `WorldWind.getTaskService().addTask(...)`) and never from the Event Dispatch Thread or the OpenGL render thread, or the application will freeze until all required tiles are loaded.
+</Note>
+
+## Getting the Elevation at a Point
+
+```java Querying elevation at a latitude/longitude
+import gov.nasa.worldwind.geom.*;
+
+Globe globe = wwd.getModel().getGlobe();
+
+Angle lat = Angle.fromDegrees(36.455556);   // Grand Canyon South Rim
+Angle lon = Angle.fromDegrees(-112.074444);
+
+// Best elevation currently in memory (may return a minimum-estimate if tiles are not yet cached)
+double elevation = globe.getElevation(lat, lon);
+System.out.printf("Elevation at (%.6f, %.6f): %.1f m%n",
+    lat.getDegrees(), lon.getDegrees(), elevation);
+
+// Convert the position to a 3D Cartesian point on the surface
+Vec4 surfacePoint = globe.computePointFromPosition(lat, lon, elevation);
+System.out.println("Cartesian surface point: " + surfacePoint);
+```
+
+## Coordinate Systems
+
+WorldWind uses two coordinate systems throughout its API:
+
+### Geodetic Coordinates (`LatLon`, `Position`)
+Geographic positions expressed as latitude, longitude, and optionally an altitude in meters above the WGS84 ellipsoid. `LatLon` stores a 2D geographic location; `Position` extends `LatLon` with an elevation field.
+
+```java LatLon and Position
+import gov.nasa.worldwind.geom.*;
+
+// 2D geographic location
+LatLon location = LatLon.fromDegrees(48.8566, 2.3522); // Paris
+
+// 3D geographic position: lat, lon, altitude in meters
+Position pos = Position.fromDegrees(48.8566, 2.3522, 300.0);
+
+// Arithmetic on angles
+Angle lat = pos.getLatitude();       // Angle object
+double degrees = lat.getDegrees();   // double
+double radians = lat.getRadians();   // double
+```
+
+### Cartesian Coordinates (`Vec4`)
+Three-dimensional vectors (`gov.nasa.worldwind.geom.Vec4`) in the globe's Cartesian space. For `EllipsoidalGlobe` (including `Earth`), the origin is at the center of the Earth, +Z points toward the North Pole, and +X points toward the intersection of the prime meridian and equator.
+
+```java Converting between geodetic and Cartesian
+Globe globe = wwd.getModel().getGlobe();
+
+// Geodetic → Cartesian
+Position geographic = Position.fromDegrees(37.0, -122.0, 1000.0);
+Vec4 cartesian = globe.computePointFromPosition(geographic);
+
+// Cartesian → geodetic
+Position backToGeo = globe.computePositionFromPoint(cartesian);
+
+System.out.printf("Round-trip lat error: %.9f deg%n",
+    Math.abs(geographic.getLatitude().getDegrees() - backToGeo.getLatitude().getDegrees()));
+```
+
+<Note>
+The **rendering tessellator** adjusts terrain mesh resolution dynamically based on the camera position — tiles close to the eye are subdivided more finely, distant tiles less so. This means the rendered terrain you see on screen may be at a lower resolution than the elevation data actually available for that area.
+
+`HighResolutionTerrain`, by contrast, **always uses the best available resolution** for every computation, regardless of where the camera is pointing. Use the rendering tessellator for real-time display and `HighResolutionTerrain` for offline analysis tasks where accuracy matters more than frame rate.
+</Note>

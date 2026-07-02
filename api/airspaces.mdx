@@ -1,0 +1,328 @@
+---
+title: "Airspace Volumes API: CappedCylinder, Box, Route, Orbit"
+sidebarTitle: "Airspaces"
+description: "Reference for the Airspace interface and volume shapes in WorldWind Java: CappedCylinder, Box, Polygon, Orbit, Route, TrackAirspace, Curtain, and more."
+---
+
+The `gov.nasa.worldwind.render.airspaces` package provides a set of volumetric 3D shapes designed for aviation airspace modelling. Unlike surface shapes, airspace shapes have explicit lower and upper altitude boundaries and are fully rendered as 3D solids with independently styled faces. All airspace shapes implement the `Airspace` interface, extend `AbstractAirspace`, and are rendered via an `AirspaceLayer`.
+
+---
+
+## `Airspace` Interface
+
+`Airspace` extends `Renderable`, `Restorable`, `AVList`, `ExtentHolder`, `Highlightable`, and `Attributable`. It provides the core altitude, datum, and rendering contract.
+
+```java title="Airspace interface — key methods"
+public interface Airspace extends Renderable, Restorable, AVList, ExtentHolder,
+                                   Highlightable, Attributable {
+
+    // Draw style constants
+    String DRAW_STYLE_FILL    = "Airspace.DrawStyleFill";
+    String DRAW_STYLE_OUTLINE = "Airspace.DrawStyleOutline";
+
+    // Visibility
+    boolean isVisible();
+    void    setVisible(boolean visible);
+
+    // Attributes
+    AirspaceAttributes getAttributes();
+    void               setAttributes(AirspaceAttributes attributes);
+    AirspaceAttributes getHighlightAttributes();
+    void               setHighlightAttributes(AirspaceAttributes highlightAttrs);
+
+    // Altitude bounds (metres)
+    double[] getAltitudes();
+    void     setAltitudes(double lowerAltitude, double upperAltitude);
+    void     setAltitude(double altitude);          // sets both surfaces to same value
+
+    // Altitude datum
+    // Values: AVKey.ABOVE_MEAN_SEA_LEVEL | ABOVE_GROUND_LEVEL | ABOVE_GROUND_REFERENCE
+    void     setAltitudeDatum(String lowerDatum, String upperDatum);
+    String[] getAltitudeDatum();
+
+    // Terrain-conforming shorthand (legacy)
+    boolean[] isTerrainConforming();
+    void      setTerrainConforming(boolean lower, boolean upper);
+
+    // Ground reference location for ABOVE_GROUND_REFERENCE datum
+    void   setGroundReference(LatLon groundReference);
+    LatLon getGroundReference();
+
+    // Rendering hints
+    boolean isAlwaysOnTop();
+    void    setAlwaysOnTop(boolean alwaysOnTop);
+
+    boolean isDrawSurfaceShape();
+    void    setDrawSurfaceShape(boolean drawSurfaceShape);
+
+    // Batch rendering / picking (performance)
+    boolean isEnableBatchRendering();
+    void    setEnableBatchRendering(boolean enableBatchRendering);
+    boolean isEnableBatchPicking();
+    void    setEnableBatchPicking(boolean enableBatchPicking);
+
+    // Depth offset (eliminates z-fighting with coincident faces)
+    boolean isEnableDepthOffset();
+    void    setEnableDepthOffset(boolean enableDepthOffset);
+
+    // Pick width
+    int  getOutlinePickWidth();
+    void setOutlinePickWidth(int outlinePickWidth);
+
+    // Extent queries
+    Extent getExtent(Globe globe, double verticalExaggeration);
+    Extent getExtent(DrawContext dc);
+
+    // Delegate owner for picking
+    Object getDelegateOwner();
+    void   setDelegateOwner(Object delegateOwner);
+}
+```
+
+<Note>
+  Use `AVKey.ABOVE_GROUND_LEVEL` as an altitude datum to make both surfaces terrain-following. Use `AVKey.ABOVE_GROUND_REFERENCE` for flat horizontal surfaces whose elevation is offset by a single reference point — useful for building rooftops.
+</Note>
+
+---
+
+## `AirspaceAttributes`
+
+`AirspaceAttributes` extends `ShapeAttributes`. For new code, prefer the `ShapeAttributes` methods directly. The `AirspaceAttributes`-specific methods (`getMaterial()`, `setMaterial()`, `getOpacity()`, `setOpacity()`, `applyInterior()`, `applyOutline()`) are deprecated.
+
+```java title="AirspaceAttributes — recommended usage"
+AirspaceAttributes attrs = new BasicAirspaceAttributes();
+
+// Preferred: use ShapeAttributes methods
+attrs.setDrawInterior(true);
+attrs.setInteriorMaterial(new Material(new Color(0, 100, 255, 150)));
+attrs.setInteriorOpacity(0.6);
+
+attrs.setDrawOutline(true);
+attrs.setOutlineMaterial(new Material(Color.WHITE));
+attrs.setOutlineOpacity(1.0);
+attrs.setOutlineWidth(1.5);
+```
+
+---
+
+## Concrete Airspace Types
+
+### `Box`
+
+An oriented rectangular parallelepiped (box) defined by two `LatLon` leg endpoints, left and right widths, and lower/upper altitudes.
+
+```java title="Box airspace"
+Box box = new Box(
+    LatLon.fromDegrees(37.0, -122.0),
+    LatLon.fromDegrees(38.0, -121.0),
+    10000.0,   // left width (metres)
+    10000.0    // right width (metres)
+);
+box.setAltitudes(1000.0, 6000.0);
+```
+
+### `Cake`
+
+A stack of `CappedCylinder` layers (tiers) sharing a common centre position. Useful for multi-floor TMA/CTR depictions.
+
+```java title="Cake — stacked cylinder tiers"
+Cake cake = new Cake();
+// Add tiers: each is a CappedCylinder-like layer
+cake.addLayer(new Cake.Layer(30000, 40000, Angle.fromDegrees(0),
+    Angle.fromDegrees(360), 1000, 3000));
+cake.addLayer(new Cake.Layer(20000, 30000, Angle.fromDegrees(0),
+    Angle.fromDegrees(360), 3000, 6000));
+cake.setCenter(LatLon.fromDegrees(37.5, -122.0));
+```
+
+### `CappedCylinder`
+
+A full or partial cylinder with configurable inner and outer radii and angular sweep. The most commonly used airspace shape for CTRs, ATZs, and restricted areas.
+
+```java title="CappedCylinder — full cylinder"
+CappedCylinder cyl = new CappedCylinder(
+    LatLon.fromDegrees(37.5, -122.1), // centre
+    50000.0                           // outer radius in metres
+);
+cyl.setInnerRadius(10000.0);          // hollow interior
+cyl.setAltitudes(0.0, 9000.0);
+cyl.setAltitudeDatum(AVKey.ABOVE_MEAN_SEA_LEVEL, AVKey.ABOVE_MEAN_SEA_LEVEL);
+
+AirspaceAttributes a = new BasicAirspaceAttributes();
+a.setInteriorMaterial(new Material(new Color(100, 180, 255, 120)));
+a.setOutlineMaterial(new Material(Color.BLUE));
+a.setDrawInterior(true);
+a.setDrawOutline(true);
+cyl.setAttributes(a);
+```
+
+### `CappedEllipticalCylinder`
+
+Like `CappedCylinder` but with independent semi-major and semi-minor axis radii, and a heading angle.
+
+### `Curtain`
+
+A vertical planar surface defined by a path of `LatLon` positions. Lower and upper altitude boundaries form the top and bottom edges.
+
+```java title="Curtain — vertical boundary fence"
+List<LatLon> path = Arrays.asList(
+    LatLon.fromDegrees(37.0, -122.0),
+    LatLon.fromDegrees(38.0, -121.0),
+    LatLon.fromDegrees(39.0, -121.5)
+);
+Curtain curtain = new Curtain(path);
+curtain.setAltitudes(0.0, 5000.0);
+```
+
+### `Orbit`
+
+A stadium (pill) shape defined by two `LatLon` end positions and a width. Suitable for holding patterns and corridor depictions.
+
+```java title="Orbit — stadium-shaped corridor"
+Orbit orbit = new Orbit(
+    LatLon.fromDegrees(37.0, -122.0),
+    LatLon.fromDegrees(38.0, -121.0),
+    Orbit.OrbitType.CENTER,   // CENTER | LEFT | RIGHT
+    30000.0                   // width in metres
+);
+orbit.setAltitudes(3000.0, 7000.0);
+```
+
+### `PartialCappedCylinder`
+
+A `CappedCylinder` sector — a pie-slice cylinder arc defined by start and stop azimuths.
+
+```java title="PartialCappedCylinder — arc sector"
+PartialCappedCylinder pcc = new PartialCappedCylinder(
+    LatLon.fromDegrees(37.5, -122.0),
+    40000.0
+);
+pcc.setAzimuths(Angle.fromDegrees(045.0), Angle.fromDegrees(180.0));
+pcc.setAltitudes(2000.0, 8000.0);
+```
+
+### `PolyArc`
+
+A `Curtain` with an optional arc cap — a mixture of straight and curved boundary segments.
+
+### `Polygon` (airspace)
+
+A vertical-sided prism defined by a set of `LatLon` positions forming the horizontal footprint.
+
+```java title="Polygon airspace — vertical prism"
+gov.nasa.worldwind.render.airspaces.Polygon ap =
+    new gov.nasa.worldwind.render.airspaces.Polygon();
+ap.setLocations(Arrays.asList(
+    LatLon.fromDegrees(37.0, -122.0),
+    LatLon.fromDegrees(37.0, -121.0),
+    LatLon.fromDegrees(38.0, -121.5)
+));
+ap.setAltitudes(500.0, 5000.0);
+```
+
+### `Route`
+
+A sequence of `Box` or `Orbit` segments that form a continuous corridor, suitable for airways and routes.
+
+### `SphereAirspace`
+
+A sphere defined by a `LatLon` centre position, altitude, and radius. Useful for proximity zones and weapon engagement zones.
+
+```java title="SphereAirspace"
+SphereAirspace sphere = new SphereAirspace(
+    LatLon.fromDegrees(37.5, -121.5),
+    5000.0,   // altitude of the centre (metres MSL)
+    10000.0   // radius in metres
+);
+```
+
+### `TrackAirspace`
+
+A track made up of a series of connected `Box` legs. Each leg is a `TrackAirspace.Leg` with independent radii and altitudes, allowing complex airway routing.
+
+---
+
+## Concrete Airspace Summary Table
+
+| Class | Key Constructor Parameters | Typical Use |
+|---|---|---|
+| `Box` | Two `LatLon` + left/right widths | Rectangular corridor |
+| `Cake` | `setCenter(LatLon)` + `addLayer(…)` | Multi-floor TMA |
+| `CappedCylinder` | `LatLon` centre + outer radius | CTR, ATZ, restricted area |
+| `CappedEllipticalCylinder` | Centre + major/minor radii + heading | Elliptical restricted zone |
+| `Curtain` | `List<LatLon>` path | Vertical fence or boundary |
+| `Orbit` | Two `LatLon` + `OrbitType` + width | Holding pattern, corridor |
+| `PartialCappedCylinder` | Centre + radius + start/stop azimuths | Pie-slice sector |
+| `PolyArc` | `List<LatLon>` + optional arc | Mixed boundary shape |
+| `Polygon` | `List<LatLon>` footprint | Vertical prism |
+| `Route` | Connected `Box`/`Orbit` segments | Airway/route |
+| `SphereAirspace` | `LatLon` + altitude + radius | Proximity/WEZ sphere |
+| `TrackAirspace` | Series of `Leg` objects | Complex airway track |
+
+---
+
+## `AirspaceLayer`
+
+`AirspaceLayer` is the recommended layer class for rendering airspace shapes. It extends `AbstractLayer` and handles sorted rendering, batch optimisations, and picking.
+
+```java title="AirspaceLayer — adding and displaying airspaces"
+AirspaceLayer airspaceLayer = new AirspaceLayer();
+airspaceLayer.setName("Class B Airspace");
+
+// Add shapes
+airspaceLayer.addAirspace(cyl);
+airspaceLayer.addAirspace(orbit);
+
+// Remove
+airspaceLayer.removeAirspace(orbit);
+
+// Bulk operations
+airspaceLayer.addAirspaces(myAirspaceList);
+airspaceLayer.removeAllAirspaces();
+
+wwd.getModel().getLayers().add(airspaceLayer);
+```
+
+---
+
+## Complete Example: CappedCylinder Airspace
+
+```java title="Creating and rendering a CappedCylinder airspace"
+// 1. Build attributes
+AirspaceAttributes attrs = new BasicAirspaceAttributes();
+attrs.setDrawInterior(true);
+attrs.setInteriorMaterial(new Material(new Color(0, 120, 255, 100)));
+attrs.setInteriorOpacity(0.4);
+attrs.setDrawOutline(true);
+attrs.setOutlineMaterial(new Material(Color.BLUE));
+attrs.setOutlineWidth(2.0);
+
+AirspaceAttributes highlight = new BasicAirspaceAttributes();
+highlight.setDrawInterior(true);
+highlight.setInteriorMaterial(new Material(new Color(255, 200, 0, 150)));
+highlight.setDrawOutline(true);
+highlight.setOutlineMaterial(new Material(Color.ORANGE));
+
+// 2. Build the cylinder (San Francisco Class B outer ring example)
+CappedCylinder classB = new CappedCylinder(
+    LatLon.fromDegrees(37.619, -122.374), // SFO centre
+    55560.0                               // 30 nm in metres
+);
+classB.setInnerRadius(0.0);
+classB.setAltitudes(0.0, 4267.0);        // surface to 14,000 ft
+classB.setAltitudeDatum(AVKey.ABOVE_MEAN_SEA_LEVEL, AVKey.ABOVE_MEAN_SEA_LEVEL);
+classB.setAttributes(attrs);
+classB.setHighlightAttributes(highlight);
+
+// 3. Add to a layer
+AirspaceLayer layer = new AirspaceLayer();
+layer.setName("SFO Class B");
+layer.addAirspace(classB);
+
+wwd.getModel().getLayers().add(layer);
+wwd.redraw();
+```
+
+<Tip>
+  Call `setEnableBatchRendering(true)` (the default) on all airspaces in a layer to allow the renderer to process them in a single OpenGL pass, significantly improving performance for large airspace datasets.
+</Tip>

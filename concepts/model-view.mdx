@@ -1,0 +1,235 @@
+---
+title: "Model and View: Globe, Layers, and Camera"
+sidebarTitle: "Model & View"
+description: "The WorldWind Model combines a Globe and LayerList. The View controls the camera position and orientation. Together they define what is rendered and from where."
+---
+
+WorldWind Java separates *what* is rendered from *where* it is rendered from by splitting responsibilities between the `Model` and the `View`. The `Model` holds the geographic content — the globe shape, elevation data, and the ordered list of layers that compose the scene. The `View` describes the virtual camera: its geographic position, orientation, and field of view. A `SceneController` orchestrates them both each frame, tessellating the globe and painting layers in order before presenting the result to the screen.
+
+## The Model
+
+The `Model` interface (`gov.nasa.worldwind.Model`) aggregates a `Globe` and a `LayerList`. It is the single object you assign to a `WorldWindow` to define the scene.
+
+```java Model interface — key method signatures
+// Retrieve the globe associated with the model
+Globe getGlobe();
+
+// Replace the globe (fires AVKey.GLOBE property-change event)
+void setGlobe(Globe globe);
+
+// Retrieve the ordered layer list
+LayerList getLayers();
+
+// Replace the entire layer list (fires AVKey.LAYERS property-change event)
+void setLayers(LayerList layers);
+
+// Debug helpers — draw the tessellation geometry as wireframe
+void setShowWireframeInterior(boolean show);
+void setShowWireframeExterior(boolean show);
+void setShowTessellationBoundingVolumes(boolean showTileBoundingVolumes);
+```
+
+`BasicModel` (`gov.nasa.worldwind.BasicModel`) is the standard implementation. When constructed with no arguments it reads the globe class name and layer list from `worldwind.xml`, creating the default Earth model with all built-in layers pre-loaded. You can also construct it directly with a specific globe and layer list:
+
+```java Creating and assigning a model
+import gov.nasa.worldwind.*;
+import gov.nasa.worldwind.avlist.AVKey;
+import gov.nasa.worldwind.globes.Earth;
+import gov.nasa.worldwind.layers.LayerList;
+
+// Option 1: create the default model from configuration (recommended)
+Model model = (Model) WorldWind.createConfigurationComponent(AVKey.MODEL_CLASS_NAME);
+wwd.setModel(model);
+
+// Option 2: construct BasicModel explicitly with a globe and empty layer list
+BasicModel custom = new BasicModel(new Earth(), new LayerList());
+wwd.setModel(custom);
+
+// Access layers and globe after assignment
+LayerList layers = wwd.getModel().getLayers();
+Globe globe = wwd.getModel().getGlobe();
+```
+
+## The Globe
+
+The `Globe` interface (`gov.nasa.worldwind.globes.Globe`) represents the planetary body — its shape, radius, and elevation data. It provides coordinate-conversion methods, elevation queries, and access to the `Tessellator` that generates the mesh geometry used for rendering.
+
+Key `Globe` methods:
+
+```java Globe interface — coordinate conversion and elevation
+// Convert geodetic position to 3D Cartesian (Vec4)
+Vec4 computePointFromPosition(Angle latitude, Angle longitude, double metersElevation);
+Vec4 computePointFromPosition(Position position);
+
+// Convert 3D Cartesian back to geodetic Position
+Position computePositionFromPoint(Vec4 point);
+
+// Query elevation at a lat/lon (best available in memory)
+double getElevation(Angle latitude, Angle longitude);
+
+// Radius at a given lat/lon on the ellipsoid
+double getRadiusAt(Angle latitude, Angle longitude);
+
+// Access the elevation model
+ElevationModel getElevationModel();
+void setElevationModel(ElevationModel elevationModel);
+
+// Access the tessellator
+Tessellator getTessellator();
+```
+
+### Earth — WGS84 Ellipsoid
+
+`Earth` (`gov.nasa.worldwind.globes.Earth`) is the default globe, modeled on the [WGS84](https://en.wikipedia.org/wiki/World_Geodetic_System) ellipsoid. Its constants are:
+
+```java Earth WGS84 constants
+public static final double WGS84_EQUATORIAL_RADIUS = 6378137.0; // meters
+public static final double WGS84_POLAR_RADIUS       = 6356752.3; // meters
+public static final double WGS84_ES                 = 0.00669437999013; // eccentricity squared
+
+public static final double ELEVATION_MIN = -11000d; // Marianas Trench depth
+public static final double ELEVATION_MAX =  8500d;  // Mt. Everest height
+```
+
+`Earth` extends `EllipsoidalGlobe`, which is the base class for any ellipsoidal planet. WorldWind also ships `FlatGlobe` (and its `Globe2D` base interface) for 2D flat-map projections; you can switch between them at runtime by swapping the globe on the model.
+
+## The View
+
+The `View` interface (`gov.nasa.worldwind.View`) defines the virtual camera. It performs the OpenGL model-view transformation — translating geographic eye positions and orientations into the matrix stack that OpenGL uses to project the scene onto the screen.
+
+```java View interface — camera state
+// Eye position (geographic)
+Position getEyePosition();
+void setEyePosition(Position eyePosition);
+
+// Current eye position (immediate, not yet committed to the matrix)
+Position getCurrentEyePosition();
+
+// Orientation
+void setHeading(Angle heading);
+Angle getHeading();
+
+void setPitch(Angle pitch);
+Angle getPitch();
+
+void setRoll(Angle roll);
+Angle getRoll();
+
+// Eye and forward vectors in Cartesian space
+Vec4 getEyePoint();
+Vec4 getForwardVector();
+Vec4 getUpVector();
+
+// Field of view
+Angle getFieldOfView();
+void setFieldOfView(Angle fieldOfView);
+
+// Animated navigation — fly to a geographic position at a given altitude
+void goTo(Position position, double elevation);
+
+// Stop any in-progress animation
+void stopMovement();
+```
+
+The default `View` implementation configured in `worldwind.xml` is `BasicOrbitView` (`gov.nasa.worldwind.view.orbit.BasicOrbitView`). It implements an orbit/trackball camera centered on a look-at point on the globe. The `OrbitViewInputHandler` wires mouse and keyboard events to this view automatically.
+
+```java Animating the camera to a position
+import gov.nasa.worldwind.geom.*;
+import gov.nasa.worldwind.view.orbit.BasicOrbitView;
+
+// Get the current view
+View view = wwd.getView();
+
+// Fly to Washington D.C. at 50 km altitude
+Position dc = Position.fromDegrees(38.9, -77.0, 50000);
+view.goTo(dc, dc.getAltitude());
+
+// Alternatively: set the eye position directly (no animation)
+view.setEyePosition(Position.fromDegrees(38.9, -77.0, 50000));
+
+// Adjust heading and pitch (e.g. north-up, looking straight down)
+view.setHeading(Angle.ZERO);
+view.setPitch(Angle.ZERO);
+
+// Force a repaint so the new camera state is applied
+wwd.redraw();
+```
+
+<Note>
+`goTo()` triggers an animated flight to the target position; it returns immediately while the animation runs asynchronously. `setEyePosition()` snaps the camera without animation. Combine `setEyePosition()` with `stopMovement()` when you need to position the camera programmatically without user-visible animation.
+</Note>
+
+## The Scene Controller
+
+The `SceneController` interface (`gov.nasa.worldwind.SceneController`) is the per-frame engine. It sits between the `WorldWindow` (which calls `repaint()` once per JOGL display callback) and the `Model`/`View` objects, orchestrating the full render and pick passes.
+
+```java SceneController interface — key method signatures
+// Model and View access (mirrors WorldWindow)
+Model getModel();
+void setModel(Model model);
+
+View getView();
+void setView(View view);
+
+// Trigger a full render + pick pass; returns ms until next requested repaint (0 = no request)
+int repaint();
+
+// Vertical terrain exaggeration (default 1.0)
+double getVerticalExaggeration();
+void setVerticalExaggeration(double verticalExaggeration);
+
+// Picking results from the most recent frame
+PickedObjectList getPickedObjectList();
+PickedObjectList getObjectsInPickRectangle();
+
+// Per-frame timing
+double getFramesPerSecond();
+double getFrameTime();
+
+// GPU resource cache
+GpuResourceCache getGpuResourceCache();
+void setGpuResourceCache(GpuResourceCache gpuResourceCache);
+```
+
+The concrete implementation registered by `worldwind.xml` is `StereoOptionSceneController`, which extends `BasicSceneController`. Unless you need custom render passes (e.g. shadow mapping), you will never need to replace the scene controller.
+
+## The Rendering Pipeline
+
+Each call to `SceneController.repaint()` executes in the following order:
+
+1. **View apply** — the `View` computes and applies the model-view and projection matrices for this frame.
+2. **Globe tessellation** — `RectangularTessellator` divides the visible portion of the globe into a variable-resolution mesh of `SectorGeometry` tiles. Tiles close to the eye are subdivided more finely; distant tiles are coarser.
+3. **Atmosphere pre-render** — `SkyGradientLayer` and similar layers that need a pre-render pass execute first.
+4. **Layer rendering** — each `Layer` in the `LayerList` has its `render(DrawContext)` method called in list order (bottom to top). Layers draw imagery, shapes, annotations, UI overlays, and more.
+5. **Pick pass** — a second, color-coded render pass identifies which objects are under the cursor and populates the `PickedObjectList`.
+6. **Frame swap** — the completed frame buffer is presented to the screen.
+
+This clean separation means you can inject custom rendering at any point in the layer stack simply by inserting a `RenderableLayer` (or any custom `Layer` implementation) at the desired index in the `LayerList`.
+
+```java Setting up a full Model + View and navigating
+import gov.nasa.worldwind.*;
+import gov.nasa.worldwind.avlist.AVKey;
+import gov.nasa.worldwind.geom.*;
+import gov.nasa.worldwind.layers.*;
+
+// 1. Create the default model
+Model model = (Model) WorldWind.createConfigurationComponent(AVKey.MODEL_CLASS_NAME);
+wwd.setModel(model);
+
+// 2. Inspect the default layer list
+LayerList layers = model.getLayers();
+System.out.println("Default layers:");
+for (Layer layer : layers) {
+    System.out.println("  " + layer.getName() + " [enabled=" + layer.isEnabled() + "]");
+}
+
+// 3. Add a custom RenderableLayer on top of all others
+RenderableLayer myLayer = new RenderableLayer();
+myLayer.setName("My Layer");
+layers.add(myLayer);
+
+// 4. Fly to Paris at 200 km altitude
+Position paris = Position.fromDegrees(48.85, 2.35, 200000);
+wwd.getView().goTo(paris, paris.getAltitude());
+wwd.redraw();
+```

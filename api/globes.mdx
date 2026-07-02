@@ -1,0 +1,415 @@
+---
+title: "Globe API: Earth, EllipsoidalGlobe, and FlatGlobe"
+sidebarTitle: "Globes"
+description: "Reference for the WorldWind Java Globe interface, EllipsoidalGlobe, Earth (WGS84), FlatGlobe, and geographic projections for 2D flat-world rendering."
+---
+
+The `gov.nasa.worldwind.globes` package defines the globe hierarchy at the heart of WorldWind Java. A `Globe` represents both the planet's shape (an ellipsoid parameterized by equatorial and polar radii) and the coordinate system used to convert between geographic positions (latitude, longitude, elevation) and 3D Cartesian vectors. The default globe for Earth rendering is `Earth`, a concrete subclass of `EllipsoidalGlobe` that uses the WGS84 ellipsoid. For flat-world (2D) rendering, `FlatGlobe` projects geographic positions onto a plane using a pluggable `GeographicProjection`. All globe types share the `Globe` interface, allowing layers and renderables to work transparently with any planet or projection.
+
+---
+
+## Globe Interface
+
+`gov.nasa.worldwind.globes.Globe` extends `WWObject` and `Extent`. It defines the complete contract for planet-shape representation, coordinate conversion, elevation queries, tessellation, and caching.
+
+### Radii and Shape
+
+```java title="Querying globe shape parameters"
+Globe globe = new Earth();
+
+double eqRadius = globe.getEquatorialRadius(); // 6,378,137.0 m for WGS84
+double polRadius = globe.getPolarRadius();      // 6,356,752.3 m for WGS84
+double maxRadius = globe.getMaximumRadius();    // max of the two
+
+// Radius at a specific location (varies with latitude on an ellipsoid)
+double rAt = globe.getRadiusAt(Angle.fromDegrees(45.0), Angle.fromDegrees(-90.0));
+double rAtLL = globe.getRadiusAt(LatLon.fromDegrees(45.0, -90.0));
+
+// Eccentricity squared: measures how oblate the ellipsoid is
+// For WGS84: e² ≈ 0.00669437999013
+double ecc2 = globe.getEccentricitySquared();
+```
+
+### Elevation Queries
+
+```java title="Querying surface elevations"
+Angle lat = Angle.fromDegrees(36.455);
+Angle lon = Angle.fromDegrees(-116.867); // Death Valley
+
+// Single-point elevation (best available in memory cache)
+double elev = globe.getElevation(lat, lon);
+
+// Batch elevation query — fills a pre-allocated double[] array
+Sector sector = Sector.fromDegrees(36, 37, -117, -116);
+List<LatLon> locations = Arrays.asList(
+    LatLon.fromDegrees(36.4, -116.9),
+    LatLon.fromDegrees(36.5, -116.8),
+    LatLon.fromDegrees(36.6, -116.7)
+);
+double[] elevations = new double[locations.size()];
+double achieved = globe.getElevations(sector, locations, 1.0 / 6378137.0, elevations);
+// achieved = actual resolution in radians; Double.MAX_VALUE if not determinable
+
+// Extreme elevations at a location or sector
+double[] extremes = globe.getMinAndMaxElevations(lat, lon); // [min, max]
+double[] sectorExtremes = globe.getMinAndMaxElevations(sector);
+
+// Overall extremes
+double globalMax = globe.getMaxElevation();
+double globalMin = globe.getMinElevation();
+```
+
+<Note>
+`getElevation()` returns the best elevation **currently available in memory**. If the tile has not yet been downloaded or loaded from disk, it returns the model's minimum extreme for that location. Use `HighResolutionTerrain` to block until full-resolution data is available.
+</Note>
+
+### Coordinate Conversion
+
+Converting between geographic `Position` and 3D Cartesian `Vec4` is one of the most frequently used Globe operations.
+
+```java title="Position ↔ Cartesian conversion"
+Globe globe = new Earth();
+
+// Geographic position → Cartesian Vec4
+Position pos = Position.fromDegrees(40.7128, -74.0060, 500.0);
+Vec4 cartesian = globe.computePointFromPosition(pos);
+
+// Overloads for explicit lat, lon, elevation
+Vec4 pt2 = globe.computePointFromPosition(
+    Angle.fromDegrees(40.7128),
+    Angle.fromDegrees(-74.0060),
+    500.0
+);
+
+// LatLon + elevation
+Vec4 pt3 = globe.computePointFromPosition(
+    LatLon.fromDegrees(40.7128, -74.0060),
+    500.0
+);
+
+// Surface point (elevation = 0 at terrain)
+Vec4 surface = globe.computePointFromLocation(LatLon.fromDegrees(40.7, -74.0));
+
+// Reverse: Cartesian Vec4 → geographic Position
+Position back = globe.computePositionFromPoint(cartesian);
+```
+
+### Grid Point Generation
+
+```java title="Generating a grid of Cartesian points over a sector"
+Sector sector = Sector.fromDegrees(30, 40, -100, -90);
+int numLat = 10;
+int numLon = 10;
+double[] elevArray = new double[numLat * numLon]; // all zeros for sea level
+Vec4[]   outPoints = new Vec4[numLat * numLon];
+
+// Fills outPoints row-major (min-lat row first)
+globe.computePointsFromPositions(sector, numLat, numLon, elevArray, outPoints);
+```
+
+### Normal and Tangent Vectors
+
+```java title="Surface normals and tangent vectors"
+Angle lat = Angle.fromDegrees(45.0);
+Angle lon = Angle.fromDegrees(-90.0);
+
+// Surface normal at a geographic location (outward-pointing unit vector)
+Vec4 normal = globe.computeSurfaceNormalAtLocation(lat, lon);
+
+// Surface normal at a Cartesian point
+Vec4 ptNormal = globe.computeSurfaceNormalAtPoint(cartesian);
+
+// North-pointing tangent at a location (tangent to globe, toward north pole)
+Vec4 north = globe.computeNorthPointingTangentAtLocation(lat, lon);
+```
+
+### Surface Orientation Matrix
+
+```java title="Computing a local East-North-Up frame"
+// Returns a matrix mapping world-Cartesian coordinates to local ENU axes:
+//   X → East, Y → North, Z → Up (outward normal)
+Matrix enu = globe.computeSurfaceOrientationAtPosition(
+    Angle.fromDegrees(40.0),
+    Angle.fromDegrees(-75.0),
+    0.0
+);
+
+// From a Position directly
+Matrix enu2 = globe.computeSurfaceOrientationAtPosition(
+    Position.fromDegrees(40.0, -75.0, 0.0)
+);
+```
+
+### Ellipsoidal Coordinate Methods
+
+WorldWind separates "globe" coordinates (which may differ for `FlatGlobe`/`Globe2D` projections) from raw "ellipsoidal" coordinates that always represent the 3D ellipsoid.
+
+```java title="Ellipsoidal coordinate methods"
+// Always returns a point on the 3D ellipsoid, regardless of Globe type
+Vec4 ellipsoidPt = globe.computeEllipsoidalPointFromPosition(
+    Angle.fromDegrees(40), Angle.fromDegrees(-74), 1000.0);
+
+// Reverse: ellipsoidal Cartesian → geographic position
+Position ellipsoidPos = globe.computePositionFromEllipsoidalPoint(ellipsoidPt);
+
+// Normal to the ellipsoid at a location
+Vec4 ellipsoidNormal = globe.computeEllipsoidalNormalAtLocation(
+    Angle.fromDegrees(40), Angle.fromDegrees(-74));
+
+// Orientation matrix aligned with the ellipsoid (not the projected globe)
+Matrix ellipsoidOri = globe.computeEllipsoidalOrientationAtPosition(
+    Angle.fromDegrees(40), Angle.fromDegrees(-74), 0.0);
+```
+
+### Line–Globe Intersection
+
+```java title="Intersecting a ray with the globe ellipsoid"
+// Intersects with the ellipsoid only (terrain elevations are not considered)
+Line ray = Line.fromSegment(new Vec4(0, 0, 20000000), new Vec4(0, 0, 0));
+Intersection[] hits = globe.intersect(ray, 0);         // at mean sea level
+Intersection[] atAlt = globe.intersect(ray, 8000.0);   // expanded by 8 km
+
+// Convenience: returns the nearest intersection position directly
+Position pos = globe.getIntersectionPosition(ray);
+
+// Triangle intersection
+Triangle tri = new Triangle(v0, v1, v2);
+Intersection[] triHits = globe.intersect(tri, 0);
+```
+
+### Tessellation
+
+```java title="Globe tessellation"
+// Returns the current tessellator (default: RectangularTessellator)
+Tessellator tess = globe.getTessellator();
+
+// Replace with a custom tessellator; null restores the default
+globe.setTessellator(myTessellator);
+
+// Tessellate the globe for the current view — called by the rendering pipeline
+SectorGeometryList geomList = globe.tessellate(drawContext);
+```
+
+### Elevation Model
+
+```java title="Getting and setting the elevation model"
+ElevationModel em = globe.getElevationModel(); // current model (may be compound)
+globe.setElevationModel(myElevationModel);     // null disables terrain
+```
+
+### State Key (Cache Invalidation)
+
+```java title="Globe state key for caching"
+// Returns an opaque key representing the globe's current configuration.
+// Renderable caches should invalidate when this key changes.
+Object       key  = globe.getStateKey(drawContext);
+GlobeStateKey gsk = globe.getGlobeStateKey(drawContext);
+GlobeStateKey gsk2 = globe.getGlobeStateKey(); // without a DrawContext
+```
+
+### Point Altitude Test
+
+```java title="Testing whether a point is above a given elevation"
+boolean isAbove = globe.isPointAboveElevation(cartesianPoint, 1000.0);
+```
+
+---
+
+## EllipsoidalGlobe
+
+`gov.nasa.worldwind.globes.EllipsoidalGlobe` is the abstract base class for all ellipsoidal globe implementations. It implements the full `Globe` interface using geodetic formulas for an oblate spheroid.
+
+### Coordinate System
+
+The EllipsoidalGlobe uses a right-handed Cartesian coordinate system:
+- **Y axis** → North pole
+- **Z axis** → Intersection of prime meridian and equator (equatorial plane)
+- **X axis** → 90° east of Z, completing the right-handed system
+- **Origin** → Center of the globe (by default `Vec4.ZERO`)
+
+### Constructor
+
+```java title="EllipsoidalGlobe constructor"
+// Parameters: equatorial radius (m), polar radius (m), eccentricity², ElevationModel
+EllipsoidalGlobe myGlobe = new EllipsoidalGlobe(
+    6378137.0,           // equatorial radius (WGS84)
+    6356752.3,           // polar radius (WGS84)
+    0.00669437999013,    // eccentricity squared
+    myElevationModel     // may be null
+);
+```
+
+### Geodetic ↔ Cartesian
+
+`EllipsoidalGlobe` provides `computeGeodeticToCartesian` and `computeCartesianToGeodetic` internally, which implement the WGS84 conversion formulas. These are invoked by the public `computePointFromPosition` and `computePositionFromPoint` methods. The conversion accounts for the ellipsoid's oblateness so positions off the equator correctly map to the flattened surface.
+
+<Note>
+The center of an `EllipsoidalGlobe` can be offset from `Vec4.ZERO` by specifying a `center` parameter in the alternate constructor. This is used internally for multi-globe rendering scenarios but is rarely needed in application code.
+</Note>
+
+---
+
+## Earth
+
+`gov.nasa.worldwind.globes.Earth` is the default concrete globe for Earth rendering. It extends `EllipsoidalGlobe` and initializes with the **WGS84** ellipsoid parameters and the default Earth elevation model specified by `AVKey.EARTH_ELEVATION_MODEL_CONFIG_FILE`.
+
+### WGS84 Constants
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `Earth.WGS84_EQUATORIAL_RADIUS` | `6378137.0` m | Semi-major axis (equatorial radius) |
+| `Earth.WGS84_POLAR_RADIUS` | `6356752.3` m | Semi-minor axis (polar radius) |
+| `Earth.WGS84_ES` | `0.00669437999013` | Eccentricity squared |
+| `Earth.ELEVATION_MIN` | `-11000.0` m | Approximate depth of the Marianas Trench |
+| `Earth.ELEVATION_MAX` | `8500.0` m | Approximate height of Mt. Everest |
+
+### Usage
+
+```java title="Creating and using an Earth globe"
+// Default construction — loads WGS84 radii and default elevation config
+Globe earth = new Earth();
+
+System.out.println(earth.getEquatorialRadius()); // 6378137.0
+System.out.println(earth.getPolarRadius());      // 6356752.3
+System.out.println(earth.getEccentricitySquared()); // 6.69437999013E-3
+
+// Convert a geographic position to Cartesian (WGS84 geocentric)
+Position denver = Position.fromDegrees(39.7392, -104.9903, 1609.0);
+Vec4 xyzDenver = earth.computePointFromPosition(denver);
+
+// Reverse
+Position back = earth.computePositionFromPoint(xyzDenver);
+System.out.println(back); // approx. (39.74°, -104.99°, 1609.0)
+
+System.out.println(earth.toString()); // "Earth"
+```
+
+<Tip>
+`Earth` is instantiated automatically by the `WorldWindow` when you add a `Globe` to a `Model`. Unless you are building a multi-globe scenario, you can simply call `new WorldWindowGLJPanel()` and WorldWind will create an `Earth` globe for you.
+</Tip>
+
+---
+
+## FlatGlobe and 2D Projections
+
+`gov.nasa.worldwind.globes.FlatGlobe` extends `EllipsoidalGlobe` and implements the `Globe2D` interface. Instead of projecting positions onto a 3D ellipsoid, it maps them onto a **flat plane** using a pluggable `GeographicProjection`. This is useful for traditional 2D map views.
+
+### Coordinate System
+
+In a `FlatGlobe`, the world plane sits at the origin with **UNIT-Z** as its normal:
+- **Y axis** → North (toward the north pole)
+- **Z axis** → Up (perpendicular to the map plane)
+- **X axis** → East
+- Latitude and longitude zero map to the origin; sea level is at z = 0.
+
+### Constructor and Projection
+
+```java title="Creating a FlatGlobe with a projection"
+import gov.nasa.worldwind.globes.*;
+import gov.nasa.worldwind.globes.projections.*;
+
+// Default construction uses Mercator projection
+FlatGlobe flat = new FlatGlobe(
+    Earth.WGS84_EQUATORIAL_RADIUS,
+    Earth.WGS84_POLAR_RADIUS,
+    Earth.WGS84_ES,
+    myElevationModel
+);
+
+// Set a different projection
+flat.setProjection(new ProjectionEquirectangular());
+flat.setProjection(new ProjectionMercator());
+flat.setProjection(new ProjectionSinusoidal());
+flat.setProjection(new ProjectionPolarEquidistant(AVKey.NORTH));
+flat.setProjection(new ProjectionUPS(AVKey.NORTH));
+flat.setProjection(new ProjectionUTM());
+flat.setProjection(new ProjectionTransverseMercator(Angle.fromDegrees(0)));
+flat.setProjection(new ProjectionModifiedSinusoidal());
+
+// Get the current projection
+GeographicProjection proj = flat.getProjection();
+```
+
+### Built-in FlatGlobe Projection String Constants
+
+`FlatGlobe` defines string constants for the most common projections. You can use these with a factory method if you prefer:
+
+| Constant | Projection |
+|----------|------------|
+| `FlatGlobe.PROJECTION_LAT_LON` | Latitude/Longitude (equirectangular / Plate Carrée) |
+| `FlatGlobe.PROJECTION_MERCATOR` | Mercator |
+| `FlatGlobe.PROJECTION_SINUSOIDAL` | Sinusoidal |
+
+### Available Projections (`gov.nasa.worldwind.globes.projections`)
+
+| Class | Description |
+|-------|-------------|
+| `ProjectionEquirectangular` | Plate Carrée / geographic projection — lat/lon mapped linearly to x/y |
+| `ProjectionMercator` | Web-standard Mercator — conformal, straight rhumb lines |
+| `ProjectionSinusoidal` | Sinusoidal equal-area projection |
+| `ProjectionModifiedSinusoidal` | Modified sinusoidal (reduced distortion at edges) |
+| `ProjectionPolarEquidistant` | Azimuthal equidistant centered on a pole |
+| `ProjectionUPS` | Universal Polar Stereographic — used near poles |
+| `ProjectionUTM` | Universal Transverse Mercator — zone-based cylindrical projection |
+| `ProjectionTransverseMercator` | General Transverse Mercator with configurable central meridian |
+
+### Example: Switching to a 2D Flat World
+
+```java title="Switching a WorldWindow to a flat-map view"
+// Obtain the current model
+Model model = wwd.getModel();
+
+// Build a FlatGlobe with the equirectangular projection
+FlatGlobe flatGlobe = new FlatGlobe(
+    Earth.WGS84_EQUATORIAL_RADIUS,
+    Earth.WGS84_POLAR_RADIUS,
+    Earth.WGS84_ES,
+    model.getGlobe().getElevationModel()  // reuse existing elevation model
+);
+flatGlobe.setProjection(new ProjectionEquirectangular());
+
+// Replace the globe in the model
+model.setGlobe(flatGlobe);
+
+// The view should also be replaced with a FlatOrbitView for proper behavior
+wwd.setView(new FlatOrbitView());
+```
+
+<Warning>
+When switching between a 3D `Earth` globe and a `FlatGlobe`, the `View` should also be replaced. A standard `BasicOrbitView` will not navigate correctly over a flat projection. Use `FlatOrbitView` for 2D rendering.
+</Warning>
+
+### Conversion Examples
+
+```java title="Converting Position to/from Cartesian on any Globe"
+Globe globe = new Earth(); // or new FlatGlobe(...)
+
+// --- Position to Cartesian ---
+Position pos = Position.fromDegrees(51.5, -0.12, 100.0); // London, 100m AGL
+Vec4 cart = globe.computePointFromPosition(pos);
+System.out.printf("Cartesian: (%.1f, %.1f, %.1f)%n", cart.x, cart.y, cart.z);
+
+// --- Cartesian to Position ---
+Position back = globe.computePositionFromPoint(cart);
+System.out.printf("Lat: %.4f°, Lon: %.4f°, Alt: %.1fm%n",
+    back.latitude.degrees, back.longitude.degrees, back.elevation);
+
+// --- Elevation at a single point ---
+double surfaceElev = globe.getElevation(
+    Angle.fromDegrees(51.5),
+    Angle.fromDegrees(-0.12)
+);
+System.out.printf("Surface elevation: %.1f m%n", surfaceElev);
+
+// --- Batch elevation query ---
+Sector sector = Sector.fromDegrees(51.0, 52.0, -1.0, 1.0);
+List<LatLon> latlons = new ArrayList<>();
+for (double lat = 51.0; lat <= 52.0; lat += 0.25) {
+    for (double lon = -1.0; lon <= 1.0; lon += 0.25) {
+        latlons.add(LatLon.fromDegrees(lat, lon));
+    }
+}
+double[] elevs = new double[latlons.size()];
+double resolution = globe.getElevations(sector, latlons, 1e-5, elevs);
+System.out.printf("Achieved resolution: %.2e radians%n", resolution);
+```

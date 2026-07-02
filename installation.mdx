@@ -1,0 +1,352 @@
+---
+title: "Install NASA WorldWind Java in Your Project"
+sidebarTitle: "Installation"
+description: "Set up NASA WorldWind Java v2.2.1 using Maven, Gradle, or direct JAR download. Includes platform-specific native library configuration for Windows, macOS, and Linux."
+---
+
+NASA WorldWind Java v2.2.1 can be added to any Java project via direct JAR download, a local Maven repository install, or a Gradle flat-directory dependency. Because WorldWind is not published to Maven Central, the recommended approach for build-tool users is to install the JARs into a local repository and reference them from there. All approaches require **Java 11 or higher** — WorldWind v2.2.0 dropped support for Java 8 when the SDK was modernized to use JOGL 2.4.
+
+## System Requirements
+
+Before installing, confirm your environment meets the following requirements:
+
+| Requirement | Minimum |
+|---|---|
+| **Java** | JDK 11 or higher |
+| **OpenGL** | OpenGL 2.0-compatible GPU |
+| **Graphics Driver** | Current driver from GPU manufacturer |
+| **Operating System** | Windows, macOS, or Linux (64-bit) |
+| **Disk Space** | ~50 MB for JARs and native libraries |
+
+<Note>
+  Out-of-date graphics drivers are the most common cause of WorldWind display failures. Ensure your driver is current before troubleshooting other issues. See the [Quickstart troubleshooting section](/quickstart) for platform-specific driver update instructions.
+</Note>
+
+## JAR Download
+
+The simplest installation method is downloading the pre-built release archive directly from GitHub.
+
+<Steps>
+
+<Step title="Download the release archive">
+  Go to the [latest GitHub release](https://github.com/NASAWorldWind/WorldWindJava/releases/latest) and download the `.zip` archive. Extract it to a directory on your machine.
+</Step>
+
+<Step title="Identify the required JARs">
+  The extracted archive contains the following files. Add the ones relevant to your project to your classpath:
+
+  | JAR | Required | Description |
+  |---|---|---|
+  | `worldwind.jar` | ✅ Yes | Core WorldWind SDK — all `gov.nasa.worldwind.*` classes and resources |
+  | `jogl-all.jar` | ✅ Yes | JOGL Java OpenGL bindings (v2.4) |
+  | `gluegen-rt.jar` | ✅ Yes | GlueGen runtime, required by JOGL |
+  | `gluegen-rt-natives-<platform>.jar` | ✅ Yes | Platform-native OpenGL support libs (see table below) |
+  | `jogl-all-natives-<platform>.jar` | ✅ Yes | Platform-native JOGL rendering libs (see table below) |
+  | `gdal.jar` | Optional | GDAL geospatial data format support (raster/vector import) |
+
+  **Platform native JARs** — include the pair matching your target OS:
+
+  | Platform | GlueGen Native JAR | JOGL Native JAR |
+  |---|---|---|
+  | Windows 64-bit | `gluegen-rt-natives-windows-amd64.jar` | `jogl-all-natives-windows-amd64.jar` |
+  | macOS (Universal) | `gluegen-rt-natives-macosx-universal.jar` | `jogl-all-natives-macosx-universal.jar` |
+  | Linux 64-bit | `gluegen-rt-natives-linux-amd64.jar` | `jogl-all-natives-linux-amd64.jar` |
+</Step>
+
+<Step title="Add JARs to your project">
+  <Tabs>
+    <Tab title="Windows">
+      Place all JARs in a `lib/` directory next to your source. Compile and run with:
+
+      ```bat title="Compile (Windows)"
+      javac -cp lib\worldwind.jar;lib\jogl-all.jar;lib\gluegen-rt.jar MyApp.java
+      ```
+
+      ```bat title="Run (Windows)"
+      java -cp .;lib\worldwind.jar;lib\jogl-all.jar;lib\gluegen-rt.jar MyApp
+      ```
+    </Tab>
+    <Tab title="macOS">
+      ```bash title="Compile (macOS)"
+      javac -cp lib/worldwind.jar:lib/jogl-all.jar:lib/gluegen-rt.jar MyApp.java
+      ```
+
+      ```bash title="Run (macOS)"
+      java -cp .:lib/worldwind.jar:lib/jogl-all.jar:lib/gluegen-rt.jar MyApp
+      ```
+    </Tab>
+    <Tab title="Linux">
+      ```bash title="Compile (Linux)"
+      javac -cp lib/worldwind.jar:lib/jogl-all.jar:lib/gluegen-rt.jar MyApp.java
+      ```
+
+      ```bash title="Run (Linux)"
+      java -cp .:lib/worldwind.jar:lib/jogl-all.jar:lib/gluegen-rt.jar MyApp
+      ```
+    </Tab>
+  </Tabs>
+</Step>
+
+</Steps>
+
+## Maven
+
+WorldWind Java is **not published to Maven Central**. To use it with Maven, install the JARs into your local Maven repository using `mvn install:install-file`, then reference them as local dependencies.
+
+<Steps>
+
+<Step title="Install JARs to local Maven repository">
+  Run these commands from the directory containing the downloaded JARs:
+
+  ```bash title="Install worldwind.jar to local Maven repo"
+  mvn install:install-file \
+    -Dfile=worldwind.jar \
+    -DgroupId=gov.nasa.worldwind \
+    -DartifactId=worldwind \
+    -Dversion=2.2.1 \
+    -Dpackaging=jar
+  ```
+
+  ```bash title="Install jogl-all.jar to local Maven repo"
+  mvn install:install-file \
+    -Dfile=jogl-all.jar \
+    -DgroupId=org.jogamp.jogl \
+    -DartifactId=jogl-all \
+    -Dversion=2.4.0 \
+    -Dpackaging=jar
+  ```
+
+  ```bash title="Install gluegen-rt.jar to local Maven repo"
+  mvn install:install-file \
+    -Dfile=gluegen-rt.jar \
+    -DgroupId=org.jogamp.gluegen \
+    -DartifactId=gluegen-rt \
+    -Dversion=2.4.0 \
+    -Dpackaging=jar
+  ```
+
+  ```bash title="Install gdal.jar to local Maven repo (optional)"
+  mvn install:install-file \
+    -Dfile=gdal.jar \
+    -DgroupId=org.gdal \
+    -DartifactId=gdal \
+    -Dversion=2.2.1 \
+    -Dpackaging=jar
+  ```
+</Step>
+
+<Step title="Add dependencies to pom.xml">
+  ```xml title="pom.xml"
+  <project>
+    <!-- ... -->
+    <dependencies>
+
+      <!-- NASA WorldWind Java core SDK -->
+      <dependency>
+        <groupId>gov.nasa.worldwind</groupId>
+        <artifactId>worldwind</artifactId>
+        <version>2.2.1</version>
+      </dependency>
+
+      <!-- JOGL Java OpenGL bindings -->
+      <dependency>
+        <groupId>org.jogamp.jogl</groupId>
+        <artifactId>jogl-all</artifactId>
+        <version>2.4.0</version>
+      </dependency>
+
+      <!-- GlueGen runtime (required by JOGL) -->
+      <dependency>
+        <groupId>org.jogamp.gluegen</groupId>
+        <artifactId>gluegen-rt</artifactId>
+        <version>2.4.0</version>
+      </dependency>
+
+      <!-- GDAL geospatial data support (optional) -->
+      <dependency>
+        <groupId>org.gdal</groupId>
+        <artifactId>gdal</artifactId>
+        <version>2.2.1</version>
+      </dependency>
+
+    </dependencies>
+  </project>
+  ```
+
+  <Warning>
+    The native JAR files (`gluegen-rt-natives-*.jar`, `jogl-all-natives-*.jar`) must also be on the runtime classpath. Install them into your local Maven repo the same way and add them as `<scope>runtime</scope>` dependencies, or place them in the same directory as the other JARs and configure the `maven-dependency-plugin` to copy them alongside.
+  </Warning>
+</Step>
+
+</Steps>
+
+## Gradle
+
+For Gradle projects, use a flat-directory repository pointing at the directory containing the WorldWind JARs.
+
+<CodeGroup>
+
+```groovy title="build.gradle (Groovy DSL)"
+repositories {
+    // Point at the directory containing the WorldWind JARs
+    flatDir {
+        dirs 'lib'
+    }
+}
+
+dependencies {
+    // Core WorldWind SDK
+    implementation name: 'worldwind'
+
+    // JOGL OpenGL bindings and GlueGen runtime
+    implementation name: 'jogl-all'
+    implementation name: 'gluegen-rt'
+
+    // Platform-specific native JARs — include the one matching your OS
+    runtimeOnly name: 'gluegen-rt-natives-windows-amd64'   // Windows
+    runtimeOnly name: 'jogl-all-natives-windows-amd64'     // Windows
+    // runtimeOnly name: 'gluegen-rt-natives-macosx-universal' // macOS
+    // runtimeOnly name: 'jogl-all-natives-macosx-universal'   // macOS
+    // runtimeOnly name: 'gluegen-rt-natives-linux-amd64'      // Linux
+    // runtimeOnly name: 'jogl-all-natives-linux-amd64'        // Linux
+
+    // GDAL support (optional)
+    implementation name: 'gdal'
+}
+```
+
+```kotlin title="build.gradle.kts (Kotlin DSL)"
+repositories {
+    // Point at the directory containing the WorldWind JARs
+    flatDir {
+        dirs("lib")
+    }
+}
+
+dependencies {
+    // Core WorldWind SDK
+    implementation(":worldwind")
+
+    // JOGL OpenGL bindings and GlueGen runtime
+    implementation(":jogl-all")
+    implementation(":gluegen-rt")
+
+    // Platform-specific native JARs — uncomment the one matching your OS
+    runtimeOnly(":gluegen-rt-natives-windows-amd64")   // Windows
+    runtimeOnly(":jogl-all-natives-windows-amd64")     // Windows
+    // runtimeOnly(":gluegen-rt-natives-macosx-universal") // macOS
+    // runtimeOnly(":jogl-all-natives-macosx-universal")   // macOS
+    // runtimeOnly(":gluegen-rt-natives-linux-amd64")      // Linux
+    // runtimeOnly(":jogl-all-natives-linux-amd64")        // Linux
+
+    // GDAL support (optional)
+    implementation(":gdal")
+}
+```
+
+</CodeGroup>
+
+Place the downloaded JARs into the `lib/` directory at the project root before running `./gradlew build`.
+
+## JOGL Native Binaries
+
+JOGL uses runtime extraction to load its platform-native OpenGL libraries. Understanding this mechanism is important for deployment scenarios.
+
+### How Runtime Extraction Works
+
+By default, when JOGL starts, it locates the native binary JAR files (`gluegen-rt-natives-*.jar`, `jogl-all-natives-*.jar`) on the classpath and extracts them into the application user's temp directory. This works automatically as long as:
+
+1. The correct native JAR for the target platform is on the classpath.
+2. The user's temp directory (`java.io.tmpdir`) is writable.
+
+The four main platform native JAR pairs are:
+
+| Platform | Files |
+|---|---|
+| **Linux x86-64** | `gluegen-rt-natives-linux-amd64.jar`, `jogl-all-natives-linux-amd64.jar` |
+| **macOS Universal** | `gluegen-rt-natives-macosx-universal.jar`, `jogl-all-natives-macosx-universal.jar` |
+| **Windows x86-64** | `gluegen-rt-natives-windows-amd64.jar`, `jogl-all-natives-windows-amd64.jar` |
+
+### Disabling Runtime Extraction
+
+Some deployment environments restrict writing to the temp directory. To load native libraries directly from the library path instead:
+
+1. **Extract** the contents of `gluegen-rt-natives-<platform>.jar` and `jogl-all-natives-<platform>.jar` using any ZIP tool.
+2. **Place** the extracted native binaries (`.dll`, `.so`, or `.dylib` files) either in your application's working directory or in a directory listed on the system library path. JOGL's supported library path variables are documented at [jogamp.org](https://jogamp.org/jogl/doc/userguide/index.html#traditionallibraryloading).
+3. **Remove** the native JAR files from the classpath. JOGL attempts to use native JAR files before the library path, so they must not be present.
+4. **Add** the JVM argument at launch:
+
+   ```bash title="Disable temp JAR cache"
+   java -Djogamp.gluegen.UseTempJarCache=false -cp worldwind.jar:jogl-all.jar:gluegen-rt.jar MyApp
+   ```
+
+<Note>
+  When deploying to end-users, ship only the native JAR for the target platform — not all three. Shipping the wrong-platform native JAR causes no harm (JOGL ignores it) but wastes disk space.
+</Note>
+
+## Verifying the Installation
+
+Once the JARs are in place, compile and run the following minimal test to confirm WorldWind can initialize an OpenGL context and render the globe:
+
+```java title="VerifyInstallation.java"
+import gov.nasa.worldwind.BasicModel;
+import gov.nasa.worldwind.awt.WorldWindowGLCanvas;
+import gov.nasa.worldwind.Version;
+
+import javax.swing.*;
+
+/**
+ * Minimal WorldWind installation verification.
+ * Prints the WorldWind version and opens a globe window.
+ */
+public class VerifyInstallation extends JFrame {
+
+    public VerifyInstallation() {
+        // Print version info to confirm worldwind.jar is on the classpath
+        System.out.println("WorldWind version: " + Version.getVersion());
+
+        WorldWindowGLCanvas wwd = new WorldWindowGLCanvas();
+        wwd.setPreferredSize(new java.awt.Dimension(800, 600));
+        this.getContentPane().add(wwd, java.awt.BorderLayout.CENTER);
+        wwd.setModel(new BasicModel());
+
+        this.setTitle("WorldWind Installation Verification — " + Version.getVersion());
+    }
+
+    public static void main(String[] args) {
+        java.awt.EventQueue.invokeLater(() -> {
+            VerifyInstallation frame = new VerifyInstallation();
+            frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+            frame.pack();
+            frame.setVisible(true);
+        });
+    }
+}
+```
+
+<Tabs>
+  <Tab title="Windows">
+    ```bat title="Compile and run verification (Windows)"
+    javac -cp lib\worldwind.jar;lib\jogl-all.jar;lib\gluegen-rt.jar VerifyInstallation.java
+    java -cp .;lib\worldwind.jar;lib\jogl-all.jar;lib\gluegen-rt.jar VerifyInstallation
+    ```
+  </Tab>
+  <Tab title="macOS">
+    ```bash title="Compile and run verification (macOS)"
+    javac -cp lib/worldwind.jar:lib/jogl-all.jar:lib/gluegen-rt.jar VerifyInstallation.java
+    java -cp .:lib/worldwind.jar:lib/jogl-all.jar:lib/gluegen-rt.jar VerifyInstallation
+    ```
+  </Tab>
+  <Tab title="Linux">
+    ```bash title="Compile and run verification (Linux)"
+    javac -cp lib/worldwind.jar:lib/jogl-all.jar:lib/gluegen-rt.jar VerifyInstallation.java
+    java -cp .:lib/worldwind.jar:lib/jogl-all.jar:lib/gluegen-rt.jar VerifyInstallation
+    ```
+  </Tab>
+</Tabs>
+
+**Expected output:**
+- The console prints: `WorldWind version: NASA WorldWind Java v2.2.1`
+- A Swing window opens displaying the interactive 3D globe with satellite imagery.
+
+If the globe is black or fails to open, refer to the [Quickstart troubleshooting section](/quickstart) for graphics driver guidance, or consult the [concepts documentation](/concepts/worldwindow) for deeper configuration options.

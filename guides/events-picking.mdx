@@ -1,0 +1,301 @@
+---
+title: "Picking, Selection, and Event Handling in WorldWind Java"
+sidebarTitle: "Events & Picking"
+description: "Handle user interaction in NASA WorldWind Java using SelectListener for object picking, PositionListener for cursor tracking, and RenderingListener for frame events."
+---
+
+WorldWind Java provides a multi-layered event system built on top of AWT's event model. The most important event type for 3D interaction is the `SelectEvent`, which is fired whenever the user clicks on, hovers over, drags, or selects objects rendered on the globe. Additional listener interfaces handle cursor position changes and rendering frame lifecycle events.
+
+<Note>
+WorldWind's event model is AWT-based and all `SelectEvent` callbacks are invoked on the **AWT Event Dispatch Thread (EDT)**. Do not perform long-running operations inside event listeners. When updating non-AWT components from a listener, use `SwingUtilities.invokeLater()`. Calling `wwd.redraw()` from within a listener is safe.
+</Note>
+
+## SelectListener
+
+`SelectListener` is the primary interface for interacting with objects on the globe. Register a listener with `wwd.addSelectListener(SelectListener)`. The single method `selected(SelectEvent event)` is called for every relevant user gesture.
+
+### SelectEvent Types
+
+`SelectEvent` carries an `eventAction` string constant identifying the gesture type:
+
+| Constant | Trigger |
+|---|---|
+| `SelectEvent.LEFT_CLICK` | User clicked the left mouse button over a renderable |
+| `SelectEvent.LEFT_DOUBLE_CLICK` | User double-clicked the left mouse button over a renderable |
+| `SelectEvent.RIGHT_CLICK` | User clicked the right mouse button over a renderable |
+| `SelectEvent.LEFT_PRESS` | User pressed (but not released) the left mouse button |
+| `SelectEvent.RIGHT_PRESS` | User pressed the right mouse button |
+| `SelectEvent.ROLLOVER` | Cursor moved over or off a renderable (fired every frame) |
+| `SelectEvent.HOVER` | Cursor paused stationary over a renderable |
+| `SelectEvent.DRAG` | User is dragging a renderable with the left button held |
+| `SelectEvent.DRAG_END` | User released the mouse after a drag |
+| `SelectEvent.BOX_ROLLOVER` | A selection rectangle intersects one or more renderables |
+
+Key `SelectEvent` methods:
+
+| Method | Returns | Description |
+|---|---|---|
+| `getEventAction()` | `String` | The event type constant (use `equals()`, not `==`) |
+| `getTopObject()` | `Object` | The top-most picked renderable, or `null` |
+| `getTopPickedObject()` | `PickedObject` | The `PickedObject` wrapper for the top-most renderable |
+| `getObjects()` | `PickedObjectList` | All picked objects at the cursor position |
+| `hasObjects()` | `boolean` | Whether any objects were picked |
+| `getPickPoint()` | `Point` | Cursor position in GL surface coordinates |
+| `getMouseEvent()` | `MouseEvent` | Underlying AWT mouse event, may be `null` |
+| `consume()` | `void` | Prevents subsequent listeners from processing this event |
+
+```java SelectListener — registering a basic click handler
+import gov.nasa.worldwind.event.*;
+
+wwd.addSelectListener(new SelectListener() {
+    @Override
+    public void selected(SelectEvent event) {
+        // Handle left-click on any rendered object.
+        if (event.getEventAction().equals(SelectEvent.LEFT_CLICK)) {
+            Object topObject = event.getTopObject();
+            if (topObject != null) {
+                System.out.println("Clicked: " + topObject.getClass().getName());
+
+                // Retrieve attached metadata if present.
+                if (topObject instanceof AVList) {
+                    Object name = ((AVList) topObject).getValue(AVKey.DISPLAY_NAME);
+                    System.out.println("Name: " + name);
+                }
+
+                // Consume the event so no other listeners react.
+                event.consume();
+            }
+        }
+    }
+});
+```
+
+## Picking Objects
+
+WorldWind performs a **color-coded picking pass** each frame. Each rendered object is assigned a unique pick color; the framebuffer pixel under the cursor is sampled to identify which object is there. This makes picking resolution-independent and works correctly through transparency.
+
+To retrieve the object under the cursor and distinguish it from terrain:
+
+```java PickedObject — inspecting what was picked
+import gov.nasa.worldwind.pick.*;
+
+wwd.addSelectListener(new SelectListener() {
+    @Override
+    public void selected(SelectEvent event) {
+        if (!event.hasObjects()) return;
+
+        PickedObject top = event.getTopPickedObject();
+
+        if (top.isTerrain()) {
+            // Cursor is over bare terrain, not a renderable.
+            System.out.println("Terrain at: " + top.getPosition());
+        } else {
+            // Cursor is over a rendered object.
+            Object obj = top.getObject();
+            System.out.println("Object: " + obj);
+            System.out.printf("Position: %s%n", top.getPosition());
+        }
+
+        // Check if any non-terrain object is anywhere in the pick list.
+        PickedObjectList objects = event.getObjects();
+        if (objects.hasNonTerrainObjects()) {
+            System.out.println("Non-terrain objects picked: " + objects.size());
+        }
+    }
+});
+```
+
+## Deep Picking
+
+By default WorldWind returns only the **top-most** object at the cursor position. **Deep picking** reports all objects at the cursor, including those occluded by others. This is useful for stacked or overlapping renderables such as airspaces, paths, or tactical symbols.
+
+Enable deep picking on the `SceneController`:
+
+```java DeepPicking.java — enabling deep picking for overlapping objects
+// Enable deep picking on the scene controller.
+wwd.getSceneController().setDeepPickEnabled(true);
+
+// Batch picking must also be disabled on the individual shapes
+// (here shown for Airspace renderables).
+for (Layer layer : wwd.getModel().getLayers()) {
+    if (layer instanceof RenderableLayer) {
+        for (Renderable r : ((RenderableLayer) layer).getRenderables()) {
+            if (r instanceof Airspace) {
+                ((Airspace) r).setEnableBatchPicking(false);
+            }
+        }
+    }
+}
+
+// Now all objects under the cursor are reported in event.getObjects().
+wwd.addSelectListener(new SelectListener() {
+    @Override
+    public void selected(SelectEvent event) {
+        if (event.getEventAction().equals(SelectEvent.HOVER)
+                && event.getObjects() != null) {
+            System.out.printf("%d objects under cursor:%n", event.getObjects().size());
+            for (PickedObject po : event.getObjects()) {
+                System.out.println("  " + po.getObject().getClass().getName());
+            }
+        }
+    }
+});
+```
+
+## Position Listener
+
+`PositionListener` receives updates whenever the geographic position under the cursor changes. This is used to display coordinates in a status bar.
+
+```java PositionEvent — tracking cursor lat/lon/alt
+import gov.nasa.worldwind.event.*;
+
+wwd.addPositionListener(new PositionListener() {
+    @Override
+    public void moved(PositionEvent event) {
+        Position pos = event.getPosition();
+        if (pos != null) {
+            System.out.printf("Cursor: %.4f°, %.4f°  Alt: %.0f m%n",
+                pos.getLatitude().degrees,
+                pos.getLongitude().degrees,
+                pos.getAltitude());
+        } else {
+            // Cursor moved off the globe.
+            System.out.println("Cursor off globe");
+        }
+
+        // getPreviousPosition() returns where the cursor was before this event.
+        Position prev = event.getPreviousPosition();
+    }
+});
+```
+
+`PositionEvent` fields:
+- `getPosition()` — current geographic position under the cursor; `null` if off the globe
+- `getPreviousPosition()` — previous position; allows computing delta movement
+- `getScreenPoint()` — AWT screen coordinates of the cursor
+
+The `StatusBar` component in `ApplicationTemplate` uses a `PositionListener` to display lat/lon/alt in real time.
+
+## Rendering Listener
+
+`RenderingListener` fires at specific points in the rendering pipeline each frame. Use it for tasks that must be synchronized with rendering, such as reading the framebuffer or updating overlays.
+
+```java RenderingEvent — hooking into the render pipeline
+import gov.nasa.worldwind.event.*;
+
+wwd.addRenderingListener(new RenderingListener() {
+    @Override
+    public void stageChanged(RenderingEvent event) {
+        String stage = event.getStage();
+
+        if (stage.equals(RenderingEvent.BEFORE_RENDERING)) {
+            // Called before the scene is rendered each frame.
+            // Good place to update renderables that must change every frame.
+        }
+        else if (stage.equals(RenderingEvent.BEFORE_BUFFER_SWAP)) {
+            // Called after rendering but before the back buffer is swapped.
+            // Use for HUD overlays drawn with OpenGL directly.
+        }
+        else if (stage.equals(RenderingEvent.AFTER_BUFFER_SWAP)) {
+            // Called after the frame is complete and visible on screen.
+        }
+    }
+});
+```
+
+`RenderingEvent` stages:
+
+| Constant | When |
+|---|---|
+| `RenderingEvent.BEFORE_RENDERING` | Start of the frame, before any scene rendering |
+| `RenderingEvent.BEFORE_BUFFER_SWAP` | After rendering, before the back-buffer swap |
+| `RenderingEvent.AFTER_BUFFER_SWAP` | After the frame is fully displayed |
+
+## Dragging Shapes
+
+WorldWind provides `BasicDragger` (in `gov.nasa.worldwind.util`) as a ready-made `SelectListener` that handles dragging any `Draggable` renderable to a new geographic position. Simply register it with `wwd.addSelectListener(new BasicDragger(wwd))`.
+
+```java DraggingShapes.java — enabling drag for all shapes in a layer
+import gov.nasa.worldwind.util.BasicDragger;
+
+// Register the dragger. It intercepts DRAG and DRAG_END SelectEvents
+// and moves any Draggable object under the cursor to follow the mouse.
+wwd.addSelectListener(new BasicDragger(wwd));
+```
+
+To implement custom drag behavior manually, handle `SelectEvent.DRAG` and `SelectEvent.DRAG_END`:
+
+```java SelectListener — custom drag logic
+import gov.nasa.worldwind.event.*;
+import gov.nasa.worldwind.geom.Position;
+
+wwd.addSelectListener(new SelectListener() {
+    private Object draggedObject = null;
+
+    @Override
+    public void selected(SelectEvent event) {
+        if (event.getEventAction().equals(SelectEvent.DRAG)) {
+            // On the first DRAG event, record which object is being dragged.
+            if (draggedObject == null && event.hasObjects()) {
+                draggedObject = event.getTopObject();
+            }
+            // Move the dragged object to the terrain position under the cursor.
+            if (draggedObject instanceof Movable) {
+                Position newPos = wwd.getCurrentPosition(); // terrain under cursor
+                if (newPos != null) {
+                    ((Movable) draggedObject).moveTo(newPos);
+                    wwd.redraw();
+                }
+            }
+            event.consume();
+        }
+        else if (event.getEventAction().equals(SelectEvent.DRAG_END)) {
+            draggedObject = null;
+        }
+    }
+});
+```
+
+## Highlighting
+
+The `HighlightController` utility class (in `gov.nasa.worldwindx.examples.util`) monitors the `WorldWindow` for `ROLLOVER` events and automatically calls `setHighlighted(true)` on any `Highlightable` renderable under the cursor. `ApplicationTemplate` creates one by default.
+
+```java HighlightController — automatic rollover highlighting
+import gov.nasa.worldwindx.examples.util.HighlightController;
+
+// Create a controller that highlights on ROLLOVER events.
+HighlightController highlightController =
+    new HighlightController(wwd, SelectEvent.ROLLOVER);
+
+// Now any Highlightable renderable (Shape, TacticalSymbol, PointPlacemark, etc.)
+// will be highlighted when the cursor moves over it.
+```
+
+To make a custom renderable support highlighting, implement the `Highlightable` interface and respond to `setHighlighted(boolean)` by switching between normal and highlight attribute bundles.
+
+## Tool Tips
+
+`ToolTipController` (in `gov.nasa.worldwindx.examples.util`) displays a text annotation when the cursor rolls over or hovers over an object that has `AVKey.DISPLAY_NAME` set. `ApplicationTemplate` installs one automatically:
+
+```java ToolTipController — showing display-name tooltips
+import gov.nasa.worldwindx.examples.util.ToolTipController;
+import gov.nasa.worldwind.avlist.AVKey;
+
+// Create a controller that shows AVKey.DISPLAY_NAME on rollover.
+ToolTipController toolTipController = new ToolTipController(wwd);
+
+// Assign a name to any renderable to enable tooltip display.
+myShape.setValue(AVKey.DISPLAY_NAME, "My Shape Label");
+mySymbol.setValue(AVKey.DISPLAY_NAME, "Friendly Ground Unit");
+```
+
+For more control over rollover vs. hover events, use the full constructor:
+
+```java ToolTipController — configuring rollover and hover keys
+// Display "DISPLAY_NAME" on rollover, "DESCRIPTION" on hover.
+ToolTipController controller = new ToolTipController(
+    wwd,
+    AVKey.DISPLAY_NAME,   // key shown on rollover
+    "gov.nasa.worldwind.Description" // key shown on hover (null to disable)
+);
+```

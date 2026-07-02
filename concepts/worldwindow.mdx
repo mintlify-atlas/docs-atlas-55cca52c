@@ -1,0 +1,200 @@
+---
+title: "WorldWindow: The Core Rendering Interface"
+sidebarTitle: "WorldWindow"
+description: "WorldWindow is the central interface in WorldWind Java, providing the OpenGL rendering surface, model/view access, event dispatching, and GPU resource cache."
+---
+
+`WorldWindow` is the top-level interface common to all toolkit-specific WorldWind rendering surfaces. Every WorldWind application revolves around a `WorldWindow` instance — it owns the OpenGL context, drives the render loop, connects the `Model` (globe and layers) to the `View` (camera), and acts as the hub for all user interaction events. Applications never instantiate `WorldWindow` directly; instead they use one of the two concrete AWT/Swing implementations provided by the SDK.
+
+## Concrete Implementations
+
+WorldWind ships two ready-to-use `WorldWindow` implementations that differ only in how they integrate with the Java UI toolkit:
+
+| Class | Extends | Best For |
+|---|---|---|
+| `WorldWindowGLCanvas` | `com.jogamp.opengl.awt.GLCanvas` (heavyweight AWT) | Most applications; best performance |
+| `WorldWindowGLJPanel` | `javax.swing.JPanel` (lightweight Swing) | Layouts that require a Swing component hierarchy |
+
+`WorldWindowGLCanvas` is the preferred choice for new applications. It is a heavyweight AWT component backed by a native OpenGL surface. Because it is heavyweight, it follows the rules documented in the [JOGL User's Guide](http://download.java.net/media/jogl/doc/userguide/) when mixed with lightweight Swing components — you may need to call `ToolTipManager.setLightWeightPopupEnabled(false)` and similar helpers.
+
+```java Creating a WorldWindowGLCanvas and embedding it in a JFrame
+import gov.nasa.worldwind.*;
+import gov.nasa.worldwind.avlist.AVKey;
+import gov.nasa.worldwind.awt.WorldWindowGLCanvas;
+
+import javax.swing.*;
+import java.awt.*;
+
+public class SimpleWorldWindApp {
+
+    public static void main(String[] args) {
+        // Required for mixing heavyweight and lightweight components
+        ToolTipManager.sharedInstance().setLightWeightPopupEnabled(false);
+        JPopupMenu.setDefaultLightWeightPopupEnabled(false);
+
+        SwingUtilities.invokeLater(() -> {
+            // Create the WorldWindow (heavyweight OpenGL canvas)
+            WorldWindowGLCanvas wwd = new WorldWindowGLCanvas();
+            wwd.setPreferredSize(new Dimension(1000, 800));
+
+            // Create and assign the default model (globe + layers from worldwind.xml)
+            Model model = (Model) WorldWind.createConfigurationComponent(AVKey.MODEL_CLASS_NAME);
+            wwd.setModel(model);
+
+            // Embed in a standard JFrame
+            JFrame frame = new JFrame("WorldWind");
+            frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+            frame.getContentPane().add(wwd, BorderLayout.CENTER);
+            frame.pack();
+            frame.setVisible(true);
+        });
+    }
+}
+```
+
+## Key Responsibilities
+
+A `WorldWindow` coordinates four major concerns inside a single component:
+
+- **OpenGL context** — manages JOGL's `GLContext` and the drawable lifecycle (init, display, reshape, dispose).
+- **Render loop** — delegates to a `SceneController` each frame to tessellate the globe, sort and render layers, and perform picking.
+- **Model and View** — holds the active `Model` (globe + layer list) and the active `View` (camera position and orientation).
+- **Event dispatch** — fires `SelectEvent`, `PositionEvent`, and `RenderingEvent` notifications to registered listeners.
+
+## The WorldWindow Interface
+
+The following methods from `gov.nasa.worldwind.WorldWindow` are the ones applications use most frequently:
+
+```java WorldWindow interface — key method signatures
+// Model and View
+void setModel(Model model);
+Model getModel();
+
+void setView(View view);
+View getView();
+
+void setModelAndView(Model model, View view);
+
+// Scene controller
+SceneController getSceneController();
+void setSceneController(SceneController sceneController);
+
+// Render triggers
+void redraw();       // enqueue a repaint with the window system (preferred)
+void redrawNow();    // repaint immediately, bypassing the event queue
+
+// Cursor position
+Position getCurrentPosition();
+
+// Picking
+PickedObjectList getObjectsAtCurrentPosition();
+PickedObjectList getObjectsInSelectionBox();
+
+// GPU resource cache
+GpuResourceCache getGpuResourceCache();
+
+// Performance statistics
+void setPerFrameStatisticsKeys(Set<String> keys);
+Collection<PerformanceStatistic> getPerFrameStatistics();
+
+// Lifecycle
+void shutdown();
+```
+
+### Event Listeners
+
+```java Registering event listeners on a WorldWindow
+// Called when the user selects (clicks, hovers, etc.) an object in the scene
+wwd.addSelectListener(selectEvent -> {
+    if (selectEvent.isLeftClick()) {
+        System.out.println("Picked: " + selectEvent.getTopObject());
+    }
+});
+
+// Called when the cursor moves over the globe
+wwd.addPositionListener(positionEvent -> {
+    Position pos = positionEvent.getPosition();
+    if (pos != null) {
+        System.out.printf("Lat=%.4f Lon=%.4f Alt=%.0fm%n",
+            pos.getLatitude().getDegrees(),
+            pos.getLongitude().getDegrees(),
+            pos.getAltitude());
+    }
+});
+
+// Called at key points during each render pass
+wwd.addRenderingListener(renderingEvent -> {
+    if (renderingEvent.getStage().equals(RenderingEvent.AFTER_RENDERING)) {
+        // post-frame work here
+    }
+});
+```
+
+## Accessing WorldWind Services
+
+The `WorldWind` class is a **singleton** that owns the shared infrastructure services used across all `WorldWindow` instances in a JVM. You access it through static methods:
+
+```java Accessing WorldWind singleton services
+import gov.nasa.worldwind.WorldWind;
+
+// Asynchronous remote data retrieval (HTTP, etc.)
+RetrievalService remote = WorldWind.getRemoteRetrievalService();
+
+// Asynchronous local data retrieval
+RetrievalService local  = WorldWind.getLocalRetrievalService();
+
+// Thread pool for background tasks
+TaskService tasks = WorldWind.getTaskService();
+
+// Scheduled / periodic tasks
+ScheduledTaskService scheduled = WorldWind.getScheduledTaskService();
+
+// On-disk data file store (tile cache, config files)
+FileStore store = WorldWind.getDataFileStore();
+
+// In-memory caches (keyed by AVKey constants)
+MemoryCacheSet caches = WorldWind.getMemoryCacheSet();
+
+// Network connectivity status
+NetworkStatus net = WorldWind.getNetworkStatus();
+
+// Lightweight per-session key/value store
+SessionCache session = WorldWind.getSessionCache();
+
+// Take the application offline (no network requests)
+WorldWind.setOfflineMode(true);
+```
+
+The `WorldWind` class also exposes altitude-mode constants used throughout the rendering pipeline:
+
+| Constant | Value | Meaning |
+|---|---|---|
+| `WorldWind.ABSOLUTE` | `0` | Altitude is above mean sea level |
+| `WorldWind.CLAMP_TO_GROUND` | `1` | Object is clamped to the terrain surface |
+| `WorldWind.RELATIVE_TO_GROUND` | `2` | Altitude is relative to the terrain below |
+| `WorldWind.CONSTANT` | `3` | Altitude does not change with terrain |
+
+## GPU Resource Cache
+
+Every `WorldWindow` maintains a `GpuResourceCache` that stores GPU-resident objects — primarily textures and vertex buffer objects — so they are not re-uploaded to the graphics card every frame.
+
+```java Querying the GPU resource cache
+GpuResourceCache gpuCache = wwd.getGpuResourceCache();
+
+// Check whether a texture is already on the GPU
+Object key = myTextureKey;
+Texture tex = gpuCache.getTexture(key);
+if (tex == null) {
+    // texture was evicted or never loaded; re-upload
+}
+```
+
+<Note>
+Applications should **never** modify the `GpuResourceCache` directly for general rendering work. The cache is self-managed. Only implementations of custom shapes or layers that create their own GPU resources (textures, VBOs, display lists) should interact with it — and then only through the `DrawContext` that is passed to `Layer.render()` and `Renderable.render()`. Directly clearing or inserting items into the cache outside of a render call can cause excessive memory usage or application crashes.
+</Note>
+
+## Threading
+
+<Note>
+WorldWind's rendering pipeline is **not thread-safe**. All modifications to the `Model`, `LayerList`, or any `Renderable` should be made from the **Event Dispatch Thread (EDT)** or before the next call to `redraw()`. The render loop runs on the JOGL OpenGL thread; the EDT and the OpenGL thread are separate. Use `SwingUtilities.invokeLater()` to marshal changes from background threads back to the EDT before triggering a repaint with `wwd.redraw()`.
+</Note>

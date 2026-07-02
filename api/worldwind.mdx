@@ -1,0 +1,234 @@
+---
+title: "WorldWind Class: SDK Entry Point and Global Services"
+sidebarTitle: "WorldWind"
+description: "The WorldWind singleton class provides access to all SDK global services: retrieval, file store, memory caches, task service, network status, and session cache."
+---
+
+`WorldWind` is the central singleton that bootstraps and manages every global service in the NASA WorldWind Java SDK. It is a `final` class with a private constructor — you never instantiate it directly. Instead, all services are accessed through its `static` methods. On first class-load the singleton initialises its retrieval services, task service, data file store, memory cache set, network status, and session cache from the active `Configuration`. Calling `WorldWind.shutDown()` tears down every service cleanly and then rebuilds the singleton in its initial empty state, making it safe to call multiple times over the lifetime of a long-running application.
+
+**Package:** `gov.nasa.worldwind`
+**Class:** `public final class WorldWind`
+
+---
+
+## Constants
+
+### Altitude Modes
+
+Altitude modes control how a shape's elevation value is interpreted relative to the globe surface. Pass these integer constants to any WorldWind geometry that accepts an altitude-mode parameter.
+
+| Constant | Value | Description |
+|---|---|---|
+| `WorldWind.ABSOLUTE` | `0` | Elevation is measured in metres above the WGS84 ellipsoid, regardless of terrain. |
+| `WorldWind.CLAMP_TO_GROUND` | `1` | Shape is clamped to the terrain surface; the elevation value is ignored. |
+| `WorldWind.RELATIVE_TO_GROUND` | `2` | Elevation is measured in metres above the terrain surface at the shape's position. |
+| `WorldWind.CONSTANT` | `3` | Elevation is held constant; the shape follows neither the ellipsoid nor the terrain. |
+
+```java title="Using altitude modes"
+Path path = new Path(positions);
+path.setAltitudeMode(WorldWind.RELATIVE_TO_GROUND);
+```
+
+### Path Types
+
+Path types determine how a line or path is interpolated between two geographic positions. Prefer the `AVKey` string equivalents in new code — these integer constants are retained for compatibility with `Polyline`.
+
+| Constant | Value | Description |
+|---|---|---|
+| `WorldWind.GREAT_CIRCLE` | `0` | Shortest-arc path on the sphere (great-circle arc). |
+| `WorldWind.LINEAR` | `1` | Straight line in Cartesian space (appears curved on screen). |
+| `WorldWind.RHUMB_LINE` | `2` | Constant-bearing (loxodromic) path on the ellipsoid. |
+
+### Anti-alias Hints
+
+These constants map directly to the JOGL/OpenGL quality hints and are used where WorldWind exposes anti-aliasing quality control.
+
+| Constant | GL Equivalent | Description |
+|---|---|---|
+| `WorldWind.ANTIALIAS_DONT_CARE` | `GL.GL_DONT_CARE` | No preference; the driver chooses. |
+| `WorldWind.ANTIALIAS_FASTEST` | `GL.GL_FASTEST` | Prefer performance over quality. |
+| `WorldWind.ANTIALIAS_NICEST` | `GL.GL_NICEST` | Prefer quality over performance. |
+
+### Shutdown Event
+
+```java title="SHUTDOWN_EVENT constant"
+public static final String SHUTDOWN_EVENT = "gov.nasa.worldwind.ShutDown";
+```
+
+`SHUTDOWN_EVENT` is the `PropertyChangeEvent` property name fired on all registered listeners immediately before `WorldWind` tears down its services during `shutDown()`. Register a listener via `WorldWind.addPropertyChangeListener(WorldWind.SHUTDOWN_EVENT, listener)` to receive advance notification of a pending shutdown, for example to cleanly release application-level GPU resources.
+
+---
+
+## Static Methods
+
+### Data File Store
+
+```java title="getDataFileStore"
+public static FileStore getDataFileStore()
+```
+
+Returns the SDK-wide `FileStore` used to read and write cached data files (terrain tiles, imagery, etc.) on the local file system. The concrete implementation is determined at startup by the `AVKey.DATA_FILE_STORE_CLASS_NAME` configuration key.
+
+**Returns:** `FileStore` — the singleton data file store; never `null` after initialization.
+
+---
+
+### Retrieval Services
+
+```java title="getRetrievalService / getLocalRetrievalService"
+public static RetrievalService getRetrievalService()
+public static RetrievalService getRemoteRetrievalService()
+public static RetrievalService getLocalRetrievalService()
+```
+
+`getRetrievalService()` and `getRemoteRetrievalService()` both return the **remote** `RetrievalService` responsible for fetching data from the network (HTTP/HTTPS). `getLocalRetrievalService()` returns a separate instance that handles retrieval from the local file system. Both instances are thread-pool backed and process requests asynchronously.
+
+**Returns:** `RetrievalService`
+
+---
+
+### Task Service
+
+```java title="getTaskService"
+public static TaskService getTaskService()
+```
+
+Returns the general-purpose `TaskService` used by WorldWind internally to run background work (e.g., tile loading). Applications can submit their own `Runnable` tasks to this service.
+
+**Returns:** `TaskService`
+
+---
+
+### Scheduled Task Service
+
+```java title="getScheduledTaskService"
+public static ScheduledTaskService getScheduledTaskService()
+```
+
+Returns the `ScheduledTaskService` for tasks that should run after a delay or repeat at a fixed interval. This is backed by `BasicScheduledTaskService` and is always initialised directly (not via `Configuration`).
+
+**Returns:** `ScheduledTaskService`
+
+---
+
+### Memory Cache Set
+
+```java title="getMemoryCacheSet / getMemoryCache"
+public static MemoryCacheSet getMemoryCacheSet()
+public static synchronized MemoryCache getMemoryCache(String key)
+```
+
+`getMemoryCacheSet()` returns the registry of all named in-memory caches used throughout the SDK. `getMemoryCache(String key)` is a shorthand that looks up a single `MemoryCache` by its string key.
+
+<ParamField path="key" type="String">
+  The AVKey string identifying the specific cache (e.g., `AVKey.TEXTURE_IMAGE_CACHE`).
+</ParamField>
+
+**Returns:** `MemoryCacheSet` / `MemoryCache`
+
+---
+
+### Network Status
+
+```java title="getNetworkStatus"
+public static NetworkStatus getNetworkStatus()
+```
+
+Returns the `NetworkStatus` object that tracks which network hosts are reachable and whether the application is in offline mode. Individual host reachability is sampled lazily and cached.
+
+**Returns:** `NetworkStatus`
+
+---
+
+### Session Cache
+
+```java title="getSessionCache"
+public static SessionCache getSessionCache()
+```
+
+Returns the lightweight `SessionCache` used to store transient per-session key/value pairs. Unlike the memory cache set, entries here have no capacity-based eviction policy — they persist for the lifetime of the WorldWind instance.
+
+**Returns:** `SessionCache`
+
+---
+
+### Component Factory
+
+```java title="createConfigurationComponent"
+public static Object createConfigurationComponent(String classNameKey)
+    throws IllegalStateException, IllegalArgumentException
+```
+
+Creates and returns a new instance of the class identified by `classNameKey` in the active `Configuration`. This is the primary factory method used internally whenever WorldWind instantiates a service or component (views, scene controllers, input handlers, etc.). The key is looked up via `Configuration.getStringValue(classNameKey)` and the resulting class name is instantiated by reflection using a no-argument constructor.
+
+<ParamField path="classNameKey" type="String" required>
+  An AVKey configuration key (e.g., `AVKey.SCENE_CONTROLLER_CLASS_NAME`) whose value is the fully-qualified class name to instantiate.
+</ParamField>
+
+**Returns:** `Object` — a new instance of the configured class.
+
+**Throws:**
+- `IllegalArgumentException` — if `classNameKey` is `null` or empty.
+- `IllegalStateException` — if no class name is registered for the key, or if the class cannot be instantiated.
+
+```java title="Using createConfigurationComponent"
+SceneController sc = (SceneController)
+    WorldWind.createConfigurationComponent(AVKey.SCENE_CONTROLLER_CLASS_NAME);
+```
+
+---
+
+### Offline Mode
+
+```java title="isOfflineMode / setOfflineMode"
+public static boolean isOfflineMode()
+public static void setOfflineMode(boolean offlineMode)
+```
+
+Controls whether WorldWind attempts any outbound network connections. When offline mode is `true`, all remote retrievals are suppressed and only locally cached data is used. The default value is `false`. These methods delegate to `getNetworkStatus()`.
+
+<ParamField path="offlineMode" type="boolean">
+  Pass `true` to prevent any network access; `false` (default) to allow it.
+</ParamField>
+
+```java title="Enabling offline mode"
+WorldWind.setOfflineMode(true);
+```
+
+---
+
+### Shutdown
+
+```java title="shutDown"
+public static synchronized void shutDown()
+```
+
+Fires `SHUTDOWN_EVENT` on all registered property-change listeners, disposes of every active service (task service, retrieval services, memory caches, session cache, scheduled task service), then reconstructs a fresh `WorldWind` singleton. Any open `WorldWindow` objects are in an indeterminate state after this call. `WorldWind` can continue to be used immediately after the call returns.
+
+---
+
+## Version
+
+Version information is provided by the `gov.nasa.worldwind.Version` utility class, which is separate from the `WorldWind` singleton.
+
+```java title="Querying version information"
+// Full version string, e.g. "NASA WorldWind Java v2.2.1"
+String full = Version.getVersion();
+
+// Version number only, e.g. "v2.2.1"
+String number = Version.getVersionNumber();
+
+// Individual components
+String major = Version.getVersionMajorNumber(); // "2"
+String minor = Version.getVersionMinorNumber(); // "2"
+String dot   = Version.getVersionDotNumber();   // "1"
+```
+
+| Method | Return | Example |
+|---|---|---|
+| `Version.getVersion()` | `String` | `"NASA WorldWind Java v2.2.1"` |
+| `Version.getVersionName()` | `String` | `"NASA WorldWind Java"` |
+| `Version.getVersionNumber()` | `String` | `"v2.2.1"` |
+| `Version.getVersionMajorNumber()` | `String` | `"2"` |
+| `Version.getVersionMinorNumber()` | `String` | `"2"` |
+| `Version.getVersionDotNumber()` | `String` | `"1"` |

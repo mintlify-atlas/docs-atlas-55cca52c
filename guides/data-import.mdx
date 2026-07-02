@@ -1,0 +1,247 @@
+---
+title: "Importing Geospatial Data Formats into WorldWind Java"
+sidebarTitle: "Data Import"
+description: "Import ESRI Shapefiles, GeoJSON, DTED, RPF, VPF, GeoTIFF, and GDAL raster formats into NASA WorldWind Java for visualization on the 3D globe."
+---
+
+NASA WorldWind Java ships with native readers for many standard geospatial formats, from vector files like ESRI Shapefiles and GeoJSON to elevation models in DTED and VPF, and raster imagery in GeoTIFF and RPF/CADRG. Each format has a dedicated reader class under `gov.nasa.worldwind.formats` or `gov.nasa.worldwind.data`, and most formats feed directly into WorldWind layers you can add to the globe.
+
+## Shapefiles
+
+ESRI Shapefiles (`.shp` + `.dbf` + `.shx`) are loaded with `ShapefileLayerFactory` in `gov.nasa.worldwind.formats.shapefile`. The factory runs loading on a background thread and delivers a ready-to-use `Layer` through a `CompletionCallback`.
+
+Supported shape types include:
+- **Point / MultiPoint** → `PointPlacemark` renderables
+- **Polyline / PolylineZ** → `ShapefilePolylines` renderable
+- **Polygon / PolygonZ** → `ShapefilePolygons` renderable
+
+An `AttributeDelegate` can be attached to the factory to style each record individually based on its DBase attributes.
+
+```java Shapefiles.java — async shapefile loading with per-record attributes
+import gov.nasa.worldwind.formats.shapefile.*;
+import gov.nasa.worldwind.layers.Layer;
+import gov.nasa.worldwind.util.WWIO;
+import javax.swing.SwingUtilities;
+
+ShapefileLayerFactory factory = new ShapefileLayerFactory();
+
+// Attach an attribute delegate for per-record styling.
+factory.setAttributeDelegate(new ShapefileRenderable.AttributeDelegate() {
+    @Override
+    public void assignAttributes(ShapefileRecord shapefileRecord,
+                                 ShapefileRenderable.Record renderableRecord) {
+        // Assign attributes based on DBase field values.
+        // e.g.: renderableRecord.setAttributes(myAttrs);
+    }
+});
+
+// Load asynchronously; result is delivered to the callback on completion.
+factory.createFromShapefileSource("data/world_borders.shp",
+    new ShapefileLayerFactory.CompletionCallback() {
+        @Override
+        public void completion(Object result) {
+            final Layer layer = (Layer) result;
+            layer.setName(WWIO.getFilename(layer.getName()));
+
+            // Layers must be added on the Event Dispatch Thread.
+            SwingUtilities.invokeLater(() ->
+                wwd.getModel().getLayers().add(layer));
+        }
+
+        @Override
+        public void exception(Exception e) {
+            e.printStackTrace();
+        }
+    });
+```
+
+For synchronous loading (small files, pre-processing pipelines), call `createFromShapefileSource(Object)` without a callback — it blocks until the layer is complete:
+
+```java ShapefileLayerFactory — synchronous load
+Layer layer = (Layer) factory.createFromShapefileSource("data/roads.shp");
+wwd.getModel().getLayers().add(layer);
+```
+
+The `Shapefile` class in the same package provides lower-level record-by-record access. Associated DBase records are available through `ShapefileRecord.getAttributes()`, which returns a `DBaseRecord` with typed field access.
+
+## GeoJSON
+
+GeoJSON documents are parsed with the `GeoJSONDoc` parser in `gov.nasa.worldwind.formats.geojson`. The example utility class `GeoJSONLoader` (in `gov.nasa.worldwindx.examples`) wraps the parser and converts each geometry type into appropriate WorldWind renderables:
+
+| GeoJSON Type | WorldWind Renderable |
+|---|---|
+| `Point` / `MultiPoint` | `PointPlacemark` |
+| `LineString` / `MultiLineString` | `Path` (if altitude ≠ 0) or `SurfacePolyline` |
+| `Polygon` / `MultiPolygon` | `Polygon` (if altitude ≠ 0) or `SurfacePolygon` |
+| `GeometryCollection` | Recursive handling of each sub-geometry |
+| `Feature` / `FeatureCollection` | Geometry + properties passed to renderables |
+
+```java GeoJSONLoader.java — loading GeoJSON into a layer
+import gov.nasa.worldwind.layers.RenderableLayer;
+
+// Use the example GeoJSONLoader utility.
+GeoJSONLoader loader = new GeoJSONLoader();
+RenderableLayer layer = new RenderableLayer();
+layer.setName("GeoJSON Data");
+
+// docSource may be a String path, File, URL, or URI.
+loader.addSourceGeometryToLayer("data/features.geojson", layer);
+
+wwd.getModel().getLayers().add(layer);
+wwd.redraw();
+```
+
+To create a layer directly from a source in one call:
+
+```java GeoJSONLoader.java — createLayerFromSource convenience method
+import gov.nasa.worldwindx.examples.GeoJSONLoader;
+import gov.nasa.worldwind.layers.Layer;
+
+GeoJSONLoader loader = new GeoJSONLoader();
+Layer layer = loader.createLayerFromSource("data/boundaries.geojson");
+layer.setName("Boundaries");
+wwd.getModel().getLayers().add(layer);
+```
+
+Feature `properties` are stored on each renderable via `setValue(AVKey.PROPERTIES, properties)`, enabling application-level attribute-driven styling.
+
+## GPS Tracks (GPX)
+
+GPS Exchange Format (GPX) files are read by `GpxReader` in `gov.nasa.worldwind.formats.gpx`. The reader parses track segments into a stream of `Position` objects, which are then visualized as `Marker` shapes on a `MarkerLayer`.
+
+```java GPSTracks.java — reading a GPX file and rendering as markers
+import gov.nasa.worldwind.formats.gpx.GpxReader;
+import gov.nasa.worldwind.geom.Position;
+import gov.nasa.worldwind.layers.MarkerLayer;
+import gov.nasa.worldwind.render.Material;
+import gov.nasa.worldwind.render.markers.*;
+import gov.nasa.worldwind.util.WWIO;
+import java.util.*;
+
+GpxReader reader = new GpxReader();
+reader.readStream(WWIO.openFileOrResourceStream("data/track.gpx", getClass()));
+Iterator<Position> positions = reader.getTrackPositionIterator();
+
+// Style: white sphere markers.
+BasicMarkerAttributes attrs =
+    new BasicMarkerAttributes(Material.WHITE, BasicMarkerShape.SPHERE, 1.0);
+
+// Build a list of markers from the track positions.
+ArrayList<Marker> markers = new ArrayList<>();
+while (positions.hasNext()) {
+    markers.add(new BasicMarker(positions.next(), attrs));
+}
+
+// Configure a MarkerLayer with LOD-based marker culling.
+MarkerLayer layer = new MarkerLayer(markers);
+layer.setOverrideMarkerElevation(true);  // clamp markers to the ground
+layer.setElevation(0);
+layer.setEnablePickSizeReturn(true);     // enable pick-size reporting
+
+wwd.getModel().getLayers().add(layer);
+wwd.redraw();
+```
+
+`GpxReader` also exposes `getWaypointIterator()` for named waypoints and `getRoutePositionIterator()` for planned routes. For NMEA 0183 sentence parsing, use `gov.nasa.worldwind.formats.nmea.NmeaReader`.
+
+## Raster Data
+
+WorldWind's raster pipeline is built around the `DataRasterReader` interface in `gov.nasa.worldwind.data`. `BasicDataRasterReaderFactory` selects the correct reader automatically from a file's extension and content:
+
+| Reader Class | Supported Formats |
+|---|---|
+| `RPFRasterReader` | RPF / CADRG / CIB frames |
+| `DTEDRasterReader` | DTED Level 0, 1, 2 elevation files |
+| `GDALDataRasterReader` | All GDAL-supported formats (requires native GDAL) |
+| `GeotiffRasterReader` | GeoTIFF imagery and elevation |
+| `BILRasterReader` | Band Interleaved by Line raster format |
+| `ImageIORasterReader` | PNG, JPEG, BMP via `javax.imageio` |
+
+```java BasicDataRasterReaderFactory — auto-detecting a reader
+import gov.nasa.worldwind.data.*;
+import gov.nasa.worldwind.avlist.AVListImpl;
+
+DataRasterReaderFactory factory = new BasicDataRasterReaderFactory();
+
+// Provide the data source; factory selects the correct reader automatically.
+DataRasterReader reader = factory.findReaderFor("data/elevation.tif", new AVListImpl());
+
+if (reader != null && reader.canRead("data/elevation.tif", null)) {
+    DataRaster[] rasters = reader.read("data/elevation.tif", null);
+    // rasters[0] contains the decoded raster data.
+}
+```
+
+## GDAL Integration
+
+`GDALDataRasterReader` delegates to the GDAL native library via JNI, enabling WorldWind to read over 100 additional formats including MrSID, ECW, HDF, NetCDF, and NITF. The reader is included in `BasicDataRasterReaderFactory` automatically but requires the GDAL native libraries at runtime.
+
+<Note>
+GDAL support requires the GDAL native shared libraries (`gdal.dll` / `libgdal.so` / `libgdal.dylib`) and the WorldWind GDAL JNI bridge on the Java library path. Without the native libraries, `GDALDataRasterReader` is silently skipped and files will only be read by the pure-Java readers.
+</Note>
+
+```java GDALDataRasterReader — checking GDAL availability
+import gov.nasa.worldwind.data.GDALDataRasterReader;
+
+GDALDataRasterReader gdalReader = new GDALDataRasterReader();
+if (gdalReader.canRead("data/image.ecw", null)) {
+    // GDAL is available and can read the file.
+    DataRaster[] rasters = gdalReader.read("data/image.ecw", null);
+}
+```
+
+## VPF Data
+
+Vector Product Format (VPF) is a US military standard for digital geographic data. WorldWind provides `VPFLayer` for rendering VPF databases directly. VPF tiles and feature tables are accessed through `gov.nasa.worldwind.formats.vpf`.
+
+```java VPFLayer — adding a VPF database as a layer
+import gov.nasa.worldwind.formats.vpf.*;
+
+// Point the layer at the root VPF database directory (contains the "lat" or "dht" file).
+VPFDatabase db = VPFUtils.readDatabase("data/vmaplv0/");
+VPFLayer vpfLayer = new VPFLayer(db);
+vpfLayer.setName("VMap Level 0");
+
+wwd.getModel().getLayers().add(vpfLayer);
+wwd.redraw();
+```
+
+## RPF / CADRG
+
+RPF (Raster Product Format) frames, including Controlled Image Base (CIB) and Compressed ARC Digitized Raster Graphics (CADRG), are read by `RPFRasterReader`. The reader handles frame boundary stitching and zone-to-geographic coordinate conversion automatically. RPF data is typically pre-processed into WorldWind's tiled cache format (see the next section) for best performance.
+
+## Tiled Data Cache
+
+Large datasets should be pre-processed into WorldWind's internal tile cache format to avoid on-the-fly projection and resampling costs. WorldWind provides producer classes in `gov.nasa.worldwind.data` for this purpose:
+
+| Producer Class | Purpose |
+|---|---|
+| `TiledImageProducer` | Converts imagery (GeoTIFF, PNG, etc.) to a tiled image layer cache |
+| `TiledElevationProducer` | Converts elevation data (DTED, BIL, GeoTIFF) to a tiled elevation model cache |
+| `BasicDataRasterReaderFactory` | Factory that feeds raw files into producers |
+
+```java TiledImageProducer — pre-processing imagery into WorldWind tile cache
+import gov.nasa.worldwind.data.*;
+import gov.nasa.worldwind.avlist.*;
+import java.io.File;
+
+// Configure the producer: input file(s) and output cache path.
+AVList params = new AVListImpl();
+params.setValue(AVKey.FILE_STORE_LOCATION, "cache/");
+params.setValue(AVKey.DATA_CACHE_NAME, "MyImagery");
+
+TiledImageProducer producer = new TiledImageProducer();
+producer.setStoreParameters(params);
+
+// Queue the source file(s).
+producer.offerDataSource(new File("data/imagery.tif"), null);
+
+// Run the conversion (blocking).
+producer.startProduction();
+
+// The finished tile cache is ready to use as a SurfaceImageLayer.
+```
+
+<Tip>
+For large source datasets (multi-gigabyte GeoTIFFs, DTED coverage areas, or RPF frame sets), always pre-process with `TiledImageProducer` or `TiledElevationProducer`. On-the-fly reading of raw files during rendering can cause severe frame rate drops. Pre-processed caches render at the same speed as WorldWind's built-in Blue Marble data.
+</Tip>

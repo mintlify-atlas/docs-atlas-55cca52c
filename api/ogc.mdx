@@ -1,0 +1,263 @@
+---
+title: "OGC Client Library: WMS, WCS, KML, COLLADA, GML"
+sidebarTitle: "OGC"
+description: "Reference for WorldWind Java's OGC client library supporting WMS, WCS, KML, KMZ, COLLADA, GML, and OWS Common web service standards."
+---
+
+The `gov.nasa.worldwind.ogc` package family provides standards-compliant client implementations for key OGC (Open Geospatial Consortium) and related specifications. It covers remote imagery and coverage services (WMS, WCS), complex geographic annotation (KML/KMZ and embedded COLLADA models), geometry types (GML), and the shared OWS Common base types. All parsers are built on a streaming StAX XML architecture for low memory overhead.
+
+---
+
+## WMS — Web Map Service
+
+Package: `gov.nasa.worldwind.ogc.wms`
+
+The WMS client parses GetCapabilities XML responses (WMS 1.1.1 and 1.3.0) and exposes the service metadata as a typed Java object graph.
+
+### Key Classes
+
+| Class | Description |
+|---|---|
+| `WMSCapabilities` | Top-level capabilities document; factory method `retrieve(URI)` fetches and parses from a server. |
+| `WMSCapabilityInformation` | `<Capability>` section: request descriptions, root layer tree. |
+| `WMSLayerCapabilities` | A single WMS `<Layer>` element with name, title, styles, CRS list, bounding boxes. |
+| `WMSServiceInformation` | `<Service>` section: title, abstract, contact, fees. |
+| `WMSLayerStyle` | Style descriptor with `<LegendURL>`. |
+| `WMSLayerDimension` | `<Dimension>` element for time/elevation parameters. |
+
+```java title="WMSCapabilities — fetching and interrogating a WMS server"
+// Synchronous fetch and parse
+URI serverURI = new URI("https://example.com/wms");
+WMSCapabilities caps = WMSCapabilities.retrieve(serverURI);
+caps.parse();
+
+// Service metadata
+String title   = caps.getServiceInformation().getServiceTitle();
+String version = caps.getVersion();
+
+// List all named (queryable) layers
+List<WMSLayerCapabilities> namedLayers = caps.getNamedLayers();
+for (WMSLayerCapabilities lc : namedLayers) {
+    System.out.println("Layer: " + lc.getName() + " — " + lc.getTitle());
+
+    // Supported image formats
+    Set<String> formats = caps.getImageFormats();
+
+    // Map request URL
+    URL getMap = caps.getRequestURL("GetMap", "http");
+
+    // Layer bounding box in geographic CRS
+    OGCBoundingBox bbox = lc.getGeographicBoundingBox();
+}
+
+// Look up a specific layer by name
+WMSLayerCapabilities specific = caps.getLayerByName("ne:countries");
+```
+
+### Creating a WMS Layer
+
+Use `WMSTiledImageLayer` (in `gov.nasa.worldwind.wms`) to display a WMS layer:
+
+```java title="WMSTiledImageLayer — from capabilities"
+AVList wmsParams = new AVListImpl();
+wmsParams.setValue(AVKey.SERVICE,         "https://example.com/wms");
+wmsParams.setValue(AVKey.LAYER_NAMES,     "ne:countries");
+wmsParams.setValue(AVKey.IMAGE_FORMAT,    "image/png");
+wmsParams.setValue(AVKey.DATASET_NAME,    "countries");
+wmsParams.setValue(AVKey.DATA_CACHE_NAME, "WMS/countries");
+wmsParams.setValue(AVKey.SERVICE_NAME,    OGCConstants.WMS_SERVICE_NAME);
+
+WMSTiledImageLayer wmsLayer = new WMSTiledImageLayer(wmsParams);
+wwd.getModel().getLayers().add(wmsLayer);
+```
+
+---
+
+## WCS — Web Coverage Service
+
+Package: `gov.nasa.worldwind.ogc.wcs`
+
+The WCS client supports GetCapabilities for elevation data services (WCS 1.0.0 and 2.0).
+
+| Class | Description |
+|---|---|
+| `WCSCapabilities` | Top-level WCS capabilities document. |
+| `WCSContents` | `<Contents>` section enumerating available coverages. |
+| `WCSCoverageSummary` | Metadata for a single coverage: identifier, bounding box, supported formats. |
+
+```java title="WCSCapabilities — listing available coverages"
+WCSCapabilities wcsCaps = new WCSCapabilities(
+    new URL("https://example.com/wcs?SERVICE=WCS&REQUEST=GetCapabilities"));
+wcsCaps.parse();
+
+WCSContents contents = wcsCaps.getContents();
+for (WCSCoverageSummary summary : contents.getCoverageSummaries()) {
+    System.out.println("Coverage: " + summary.getIdentifier());
+}
+```
+
+---
+
+## KML — Keyhole Markup Language
+
+Package: `gov.nasa.worldwind.ogc.kml`
+
+WorldWind's KML implementation parses KML 2.2 (plain `.kml` and zipped `.kmz`) documents from files, URLs, and streams. The `KMLRoot` is the entry point, and `KMLController` integrates the parsed tree into the render loop.
+
+### `KMLRoot`
+
+```java title="KMLRoot — parsing KML and KMZ"
+// From a File, URL, String path, or InputStream — auto-detects KML vs KMZ
+KMLRoot root = KMLRoot.createAndParse(new File("scene.kml"));
+KMLRoot kmz  = KMLRoot.createAndParse(new URL("https://example.com/overlay.kmz"));
+KMLRoot stream = KMLRoot.createAndParse(inputStream); // assumes KML
+
+// Detail level bias (positive = finer; default 0)
+root.setDetailHint(0.5);
+```
+
+`createAndParse()` accepts any of: `File`, `URL`, `InputStream`, or `String` (file path or URL). For KMZ files, it automatically extracts the primary KML document from the ZIP archive.
+
+### `KMLController`
+
+`KMLController` wraps a `KMLRoot` and implements `Renderable` and `PreRenderable` so the KML scene can be added directly to a `RenderableLayer`:
+
+```java title="KMLController — adding KML to the scene"
+KMLRoot root = KMLRoot.createAndParse(docSource);
+KMLController controller = new KMLController(root);
+
+RenderableLayer layer = new RenderableLayer();
+layer.addRenderable(controller);
+wwd.getModel().getLayers().add(layer);
+wwd.redraw();
+```
+
+### KML Element Classes
+
+The parser maps every KML element to a corresponding Java class:
+
+| KML Element | Java Class |
+|---|---|
+| `<kml>` root | `KMLRoot` |
+| `<Document>` | `KMLDocument` |
+| `<Folder>` | `KMLFolder` |
+| `<Placemark>` | `KMLPlacemark` |
+| `<Point>` | `KMLPoint` |
+| `<LineString>` | `KMLLineString` |
+| `<Polygon>` | `KMLPolygon` |
+| `<MultiGeometry>` | `KMLMultiGeometry` |
+| `<GroundOverlay>` | `KMLGroundOverlay` |
+| `<ScreenOverlay>` | `KMLScreenOverlay` |
+| `<NetworkLink>` | `KMLNetworkLink` |
+| `<Model>` | `KMLModel` (references COLLADA) |
+| `<Style>` / `<StyleMap>` | `KMLStyle` / `KMLStyleMap` |
+| `<TimeSpan>` / `<TimeStamp>` | `KMLTimeSpan` / `KMLTimeStamp` |
+| `<Camera>` / `<LookAt>` | `KMLCamera` / `KMLLookAt` |
+
+---
+
+## COLLADA
+
+Package: `gov.nasa.worldwind.ogc.collada`
+
+COLLADA (`.dae`) 3D models are referenced from KML `<Model>` elements. WorldWind automatically loads and renders COLLADA geometry when a KML document is parsed. Direct use of the COLLADA API is rarely necessary outside of custom exporters or inspectors.
+
+| Class | Description |
+|---|---|
+| `ColladaRoot` | Top-level COLLADA document; entry point for direct parsing. |
+| `ColladaMesh` | Geometric mesh data (vertices, normals, texture coordinates). |
+| `ColladaTriangles` | Triangle primitive set within a mesh. |
+| `ColladaLines` | Line primitive set. |
+| `ColladaMaterial` | Material binding referencing an effect. |
+| `ColladaEffect` | Shading parameters (Phong/Lambert/Blinn). |
+| `ColladaPhong` | Phong shading parameters: diffuse, specular, shininess. |
+| `ColladaLambert` | Lambert (diffuse-only) shading. |
+| `ColladaImage` | Texture image reference. |
+| `ColladaNode` | Scene graph node with transform matrix. |
+| `ColladaMatrix` | 4×4 column-major transformation matrix. |
+
+**Supported features:**
+- Triangle and line meshes
+- Phong and Lambert material shading
+- Diffuse texture mapping via `<image>`
+- Node hierarchies with `<matrix>` transforms
+- Instances of geometry, nodes, and materials
+
+<Note>
+  COLLADA skinning (animations) and parametric curves are not currently supported. Only static geometry with simple material assignments will render correctly.
+</Note>
+
+---
+
+## GML — Geography Markup Language
+
+Package: `gov.nasa.worldwind.ogc.gml`
+
+WorldWind's GML parser supports a subset of GML 3.x geometry types used by WCS and WFS responses.
+
+| Class | Description |
+|---|---|
+| `GMLPos` | A single `<gml:pos>` coordinate pair or triplet. |
+| `GMLPosList` | A `<gml:posList>` sequence of coordinates. |
+| `GMLRectifiedGrid` | Grid definition used in WCS coverage descriptions. |
+| `GMLGridEnvelope` | Low/high corner pair defining a grid extent. |
+| `GMLBoundingShape` | `<gml:boundedBy>` bounding envelope. |
+
+---
+
+## OWS Common
+
+Package: `gov.nasa.worldwind.ogc.ows`
+
+OWS Common (OGC Web Services Common) defines shared base types reused by WMS, WCS, and WFS responses.
+
+| Class | Description |
+|---|---|
+| `OWSServiceIdentification` | Service title, abstract, keywords, type, version. |
+| `OWSServiceProvider` | Provider contact information. |
+| `OWSOperationsMetadata` | Supported operations and their endpoints. |
+| `OWSOperation` | A single operation (e.g., `GetCapabilities`, `GetCoverage`). |
+| `OWSDCP` | Distributed Computing Platform: HTTP GET/POST endpoints. |
+| `OWSRequestDescription` | Extends `OGCRequestDescription` for OWS-based services. |
+
+---
+
+## Complete Example: WMS GetCapabilities
+
+```java title="Fetching and using WMSCapabilities"
+try {
+    // 1. Retrieve and parse capabilities
+    URI uri = new URI("https://ows.terrestris.de/osm/service");
+    WMSCapabilities caps = WMSCapabilities.retrieve(uri);
+    caps.parse();
+
+    System.out.println("WMS Version: " + caps.getVersion());
+    System.out.println("Service: "     + caps.getServiceInformation().getServiceTitle());
+
+    // 2. List named layers
+    List<WMSLayerCapabilities> layers = caps.getNamedLayers();
+    for (WMSLayerCapabilities lc : layers) {
+        System.out.printf("  [%s] %s%n", lc.getName(), lc.getTitle());
+    }
+
+    // 3. Build AVList params for WMSTiledImageLayer
+    if (!layers.isEmpty()) {
+        WMSLayerCapabilities first = layers.get(0);
+
+        AVList params = new AVListImpl();
+        params.setValue(AVKey.SERVICE,         uri.toString());
+        params.setValue(AVKey.LAYER_NAMES,     first.getName());
+        params.setValue(AVKey.IMAGE_FORMAT,    "image/png");
+        params.setValue(AVKey.DATASET_NAME,    first.getName());
+        params.setValue(AVKey.DATA_CACHE_NAME, "WMS/" + first.getName());
+        params.setValue(AVKey.SERVICE_NAME,    "OGC:WMS");
+
+        WMSTiledImageLayer wmsLayer = new WMSTiledImageLayer(params);
+        wmsLayer.setName(first.getTitle());
+        wwd.getModel().getLayers().add(wmsLayer);
+    }
+
+} catch (Exception e) {
+    e.printStackTrace();
+}
+```
