@@ -1,7 +1,7 @@
 ---
 title: "WorldWind Class: SDK Entry Point and Global Services"
 sidebarTitle: "WorldWind"
-description: "The WorldWind singleton class provides access to all SDK global services: retrieval, file store, memory caches, task service, network status, and session cache."
+description: "WorldWind singleton provides access to SDK global services: retrieval, file store, memory caches, task service, network status, and session cache."
 ---
 
 `WorldWind` is the central singleton that bootstraps and manages every global service in the NASA WorldWind Java SDK. It is a `final` class with a private constructor — you never instantiate it directly. Instead, all services are accessed through its `static` methods. On first class-load the singleton initialises its retrieval services, task service, data file store, memory cache set, network status, and session cache from the active `Configuration`. Calling `WorldWind.shutDown()` tears down every service cleanly and then rebuilds the singleton in its initial empty state, making it safe to call multiple times over the lifetime of a long-running application.

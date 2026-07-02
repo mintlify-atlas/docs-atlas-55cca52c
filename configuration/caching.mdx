@@ -1,7 +1,7 @@
 ---
-title: "Caching Architecture in NASA WorldWind Java"
+title: "NASA WorldWind Java Caching Architecture and Configuration"
 sidebarTitle: "Caching"
-description: "WorldWind Java uses a three-tier caching system: a disk-based file store for imagery and elevation tiles, memory caches for parsed objects, and a GPU resource cache for textures."
+description: "WorldWind Java caching overview: disk FileStore for tiles, heap MemoryCaches for scene objects, GpuResourceCache for textures and VBOs, and a SessionCache."
 ---
 
 WorldWind Java manages data at three distinct levels of storage. The **file store** (`FileStore` / `BasicDataFileStore`) acts as a persistent, disk-backed cache for remotely retrieved tiles — satellite imagery, elevation data, KML, and COLLADA models. Above that, a set of **memory caches** (`MemoryCache` / `BasicMemoryCacheSet`) hold parsed geometry, tessellation results, and per-layer objects in heap memory so the application avoids re-parsing files on every frame. Finally, the **GPU resource cache** (`GpuResourceCache` / `BasicGpuResourceCache`) tracks textures, vertex buffer objects (VBOs), and display lists that have been uploaded to graphics memory. A fourth, lightweight **session cache** (`SessionCache` / `BasicSessionCache`) provides a general-purpose in-memory key-value store for transient per-session data. All four tiers are accessible through static methods on `WorldWind` or through the active `WorldWindow`, and their capacities are controlled via `Configuration.setValue()` with the appropriate `AVKey` constants.
@@ -271,7 +271,7 @@ import gov.nasa.worldwind.cache.MemoryCacheSet;
 MemoryCacheSet memoryCacheSet = WorldWind.getMemoryCacheSet();
 
 // Iterate every registered MemoryCache and clear it
-for (MemoryCache cache : memoryCacheSet.getAllCaches()) {
+for (MemoryCache cache : memoryCacheSet.getAllCaches().values()) {
     cache.clear();
 }
 ```

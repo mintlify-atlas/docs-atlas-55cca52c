@@ -78,6 +78,7 @@ GeoJSON documents are parsed with the `GeoJSONDoc` parser in `gov.nasa.worldwind
 
 ```java GeoJSONLoader.java — loading GeoJSON into a layer
 import gov.nasa.worldwind.layers.RenderableLayer;
+import gov.nasa.worldwindx.examples.GeoJSONLoader;
 
 // Use the example GeoJSONLoader utility.
 GeoJSONLoader loader = new GeoJSONLoader();
@@ -142,7 +143,7 @@ wwd.getModel().getLayers().add(layer);
 wwd.redraw();
 ```
 
-`GpxReader` also exposes `getWaypointIterator()` for named waypoints and `getRoutePositionIterator()` for planned routes. For NMEA 0183 sentence parsing, use `gov.nasa.worldwind.formats.nmea.NmeaReader`.
+`GpxReader` exposes `getTracks()` to retrieve all parsed `Track` objects directly. For NMEA 0183 sentence parsing, use `gov.nasa.worldwind.formats.nmea.NmeaReader`.
 
 ## Raster Data
 
@@ -196,9 +197,10 @@ Vector Product Format (VPF) is a US military standard for digital geographic dat
 
 ```java VPFLayer — adding a VPF database as a layer
 import gov.nasa.worldwind.formats.vpf.*;
+import java.io.File;
 
 // Point the layer at the root VPF database directory (contains the "lat" or "dht" file).
-VPFDatabase db = VPFUtils.readDatabase("data/vmaplv0/");
+VPFDatabase db = VPFUtils.readDatabase(new File("data/vmaplv0/"));
 VPFLayer vpfLayer = new VPFLayer(db);
 vpfLayer.setName("VMap Level 0");
 

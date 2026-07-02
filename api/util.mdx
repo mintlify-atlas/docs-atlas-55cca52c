@@ -37,7 +37,7 @@ boolean emptyList = WWUtil.isEmpty(Collections.emptyList()); // true
 // Copy selected AVList keys from one list to another
 WWUtil.copyValues(source, dest, new String[] {
     AVKey.DATASET_NAME, AVKey.FORMAT_SUFFIX
-});
+}, false); // false = do not overwrite existing values in dest
 ```
 
 | Method | Return | Description |
@@ -49,7 +49,7 @@ WWUtil.copyValues(source, dest, new String[] {
 | `makeDoubleForLocale(String)` | `Double` | Uses default locale decimal separator. |
 | `isEmpty(Object)` | `boolean` | True if argument is null. |
 | `isEmpty(List<?>)` | `boolean` | True if list is null or `isEmpty()`. |
-| `copyValues(AVList, AVList, String[])` | `void` | Copies named keys between AVLists. |
+| `copyValues(AVList, AVList, String[], boolean)` | `void` | Copies named keys from source to dest; last arg controls whether existing values are overwritten. |
 
 ---
 
@@ -63,9 +63,6 @@ import gov.nasa.worldwind.util.WWIO;
 // Read a text file as a String
 String content = WWIO.readTextFile(new File("config.xml"));
 
-// Read an InputStream as a String with explicit encoding
-String xml = WWIO.readTextStream(inputStream, "UTF-8");
-
 // Check whether a cached URL resource is stale
 boolean stale = WWIO.isFileOutOfDate(
     new URL("file:///cache/imagery/tile.dds"),
@@ -76,8 +73,8 @@ String safe = WWIO.replaceIllegalFileNameCharacters("my:map/image?.tif");
 // → "my_map_image_.tif"
 
 // Get file extension (includes the dot)
-String ext = WWIO.getFileSuffix("tile.png");   // → ".png"
-String none = WWIO.getFileSuffix("noext");     // → null
+String ext = WWIO.getSuffix("tile.png");   // → ".png"
+String none = WWIO.getSuffix("noext");     // → null
 
 // Construct a URL from a path or URL string
 URL url = WWIO.makeURL("https://example.com/data");
@@ -91,10 +88,9 @@ String joined = WWIO.appendPathPart("https://example.com/wms",
 | Method | Description |
 |---|---|
 | `readTextFile(File)` | Reads entire file as UTF-8 `String`. |
-| `readTextStream(InputStream, String)` | Reads stream with given charset name. |
 | `isFileOutOfDate(URL, long)` | Returns true if the file's last-modified timestamp is before `expiryTime`. |
 | `replaceIllegalFileNameCharacters(String)` | Replaces `\\ / : * ? " < > \|` with underscores. |
-| `getFileSuffix(String)` | Returns the `.ext` portion, or null if none. |
+| `getSuffix(String)` | Returns the `.ext` portion, or null if none. |
 | `makeURL(String)` | Converts a file path or URL string to `java.net.URL`. |
 | `makeURL(Object, String)` | Same, with fallback default protocol (e.g. `"file"`). |
 | `appendPathPart(String, String)` | Joins two path segments handling trailing/leading slashes. |

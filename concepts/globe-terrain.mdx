@@ -1,7 +1,7 @@
 ---
-title: "Globe and Terrain in WorldWind Java"
+title: "WorldWind Java Globe, Terrain, and Elevation Models"
 sidebarTitle: "Globe & Terrain"
-description: "WorldWind Java renders terrain using tessellation and elevation models. Learn how the Globe, ElevationModel, Tessellator, and HighResolutionTerrain classes work together."
+description: "WorldWind Java renders terrain via tessellation and elevation models. Learn how Globe, ElevationModel, Tessellator, and HighResolutionTerrain work."
 ---
 
 WorldWind Java's 3D terrain system is built from three interlocking pieces: the `Globe`, which defines the planet's shape and provides elevation data; the `Tessellator`, which subdivides the visible surface into a variable-resolution triangle mesh each frame; and the `ElevationModel`, which supplies the actual elevation samples that give the mesh its topographic shape. Together they produce the smooth, multi-resolution terrain that adapts in real time as the camera moves. For analysis tasks that require precise terrain queries — line-of-sight, terrain profiles, surface drape — the `HighResolutionTerrain` class provides a separate, always-maximum-resolution path independent of the rendering tessellator.

@@ -292,10 +292,10 @@ mySymbol.setValue(AVKey.DISPLAY_NAME, "Friendly Ground Unit");
 For more control over rollover vs. hover events, use the full constructor:
 
 ```java ToolTipController — configuring rollover and hover keys
-// Display "DISPLAY_NAME" on rollover, "DESCRIPTION" on hover.
+// Display "DISPLAY_NAME" on rollover, "HOVER_TEXT" on hover.
 ToolTipController controller = new ToolTipController(
     wwd,
     AVKey.DISPLAY_NAME,   // key shown on rollover
-    "gov.nasa.worldwind.Description" // key shown on hover (null to disable)
+    AVKey.HOVER_TEXT      // key shown on hover (null to disable)
 );
 ```

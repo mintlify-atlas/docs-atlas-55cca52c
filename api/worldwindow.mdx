@@ -1,7 +1,7 @@
 ---
 title: "WorldWindow Interface: Rendering Surface and Event Hub"
 sidebarTitle: "WorldWindow"
-description: "WorldWindow is the top-level interface for all WorldWind rendering windows, providing model/view access, redraw control, event listeners, and GPU resource cache management."
+description: "WorldWindow is the top-level interface for WorldWind rendering surfaces, binding Model, View, SceneController, event listeners, and GPU resource cache."
 ---
 
 `WorldWindow` is the top-level interface that every WorldWind rendering surface implements. It binds together a `Model` (globe + layers), a `View` (camera), a `SceneController` (render loop), an `InputHandler` (mouse/keyboard routing), and a set of event-listener registries into a single object that an application can embed in its UI hierarchy. All rendering, picking, and event dispatch flows through a `WorldWindow`. The interface extends `AVList` so that arbitrary key-value metadata can be attached to any window instance.

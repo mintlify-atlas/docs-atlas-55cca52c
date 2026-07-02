@@ -1,7 +1,7 @@
 ---
-title: "Model and View: Globe, Layers, and Camera"
+title: "Model and View: Globe, Layers, and Camera in WorldWind"
 sidebarTitle: "Model & View"
-description: "The WorldWind Model combines a Globe and LayerList. The View controls the camera position and orientation. Together they define what is rendered and from where."
+description: "WorldWind's Model combines a Globe and LayerList. The View controls camera position and orientation. Together they define what is rendered and from where."
 ---
 
 WorldWind Java separates *what* is rendered from *where* it is rendered from by splitting responsibilities between the `Model` and the `View`. The `Model` holds the geographic content — the globe shape, elevation data, and the ordered list of layers that compose the scene. The `View` describes the virtual camera: its geographic position, orientation, and field of view. A `SceneController` orchestrates them both each frame, tessellating the globe and painting layers in order before presenting the result to the screen.

@@ -1,5 +1,5 @@
 ---
-title: "Terrain and Elevation Model API Reference"
+title: "Terrain API: ElevationModel, CompoundModel, and HRT"
 sidebarTitle: "Terrain"
 description: "Reference for ElevationModel, CompoundElevationModel, BasicElevationModel, HighResolutionTerrain, and the Tessellator used in NASA WorldWind Java."
 ---
@@ -162,7 +162,7 @@ boolean present = compound.containsElevationModel(myModel);
 ```
 
 <Tip>
-Child models are queried in list order. Insert high-resolution regional models at a **low index** (high priority) so they take precedence over coarser global models when their coverage areas overlap.
+The list is maintained sorted from lowest to highest resolution; queries iterate from highest resolution to lowest, returning the first non-missing value. When using `addElevationModel(ElevationModel)`, sorting is automatic. When using `addElevationModel(int, ElevationModel)`, insert high-resolution models at a **high index** (end of list) to match the expected lowest-to-highest order.
 </Tip>
 
 ### Batch Queries with Per-Model Resolution Arrays
@@ -429,7 +429,7 @@ terrain.intersect(positions, new HighResolutionTerrain.IntersectionCallback() {
 
 ```java title="Timeout and cache management"
 // Set a maximum wait time in milliseconds for tile retrieval
-terrain.setTimeout(30000L); // 30 seconds; 0 = wait indefinitely
+terrain.setTimeout(30000L); // 30 seconds; null = wait indefinitely
 
 // Inspect internal cache usage
 double cacheUsage = terrain.getCacheUsage();  // fraction 0.0–1.0
@@ -510,7 +510,7 @@ for (int i = 0; i <= 100; i++) {
     Angle lon = ll.getLongitude();
 
     // Get full-resolution surface elevation (blocks until data available)
-    double elev = terrain.getElevation(new Position(ll, 0));
+    double elev = terrain.getElevation(ll);
     double distM = LatLon.greatCircleDistance(start, ll).radians
                    * globe.getEquatorialRadius();
 

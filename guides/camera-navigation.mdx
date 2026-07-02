@@ -181,15 +181,16 @@ Mouse and keyboard navigation gestures are managed by a `ViewInputHandler`. `Bas
 
 `ViewInputAttributes` (accessible from the input handler) defines gesture-to-action bindings. You can modify mouse sensitivity, disable specific gestures, or configure keyboard shortcuts:
 
-```java AWTInputHandler — customizing input gestures
+```java AWTInputHandler — stopping active animations
 import gov.nasa.worldwind.awt.ViewInputHandler;
 
 ViewInputHandler handler = wwd.getView().getViewInputHandler();
 
-// Temporarily freeze the view to prevent user navigation.
-handler.setEnabled(false);
-// ... do programmatic animation ...
-handler.setEnabled(true);
+// Stop any in-progress animations (fly-to, heading, zoom, etc.).
+handler.stopAnimators();
+
+// Check whether any animation is still running.
+boolean animating = handler.isAnimating();
 ```
 
 ## Programmatic View Iteration

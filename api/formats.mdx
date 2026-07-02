@@ -16,13 +16,13 @@ NASA WorldWind Java ships with built-in parsers and writers for a broad range of
 | `formats/geojson` | GeoJSON | `GeoJSONDoc`, `GeoJSONGeometry`, `GeoJSONObject` |
 | `formats/tiff` | GeoTIFF raster | `GeotiffReader`, `GeotiffWriter`, `GeoTiff` |
 | `formats/dted` | DTED elevation | `DTEDRasterReader` (in `data` package) |
-| `formats/gpx` | GPX GPS tracks | `GPXDoc`, `GPXTrack`, `GPXWaypoint` |
-| `formats/nmea` | NMEA-0183 sentences | `NMEAReader`, `NMEASentence` |
+| `formats/gpx` | GPX GPS tracks | `GpxReader`, `GpxTrack`, `GpxTrackPoint` |
+| `formats/nmea` | NMEA-0183 sentences | `NmeaReader`, `NmeaTrackPoint` |
 | `formats/rpf` | CADRG/CIB raster maps | `RPFFrameFilename`, `RPFTOCFile`, `RPFRasterReader` |
 | `formats/vpf` | Vector Product Format | `VPFDatabase`, `VPFCoverage`, `VPFFeatureClass` |
-| `formats/dds` | DirectDraw Surface | `DDSReader`, `DDSCompressor` |
+| `formats/dds` | DirectDraw Surface | `DDSCompressor`, `DDSDecompressor` |
 | `formats/csv` | CSV tabular data | `CSVReader` |
-| `formats/georss` | GeoRSS feeds | `GeoRSSParser`, `SimpleGeoRSSParser` |
+| `formats/georss` | GeoRSS feeds | `GeoRSSParser` |
 | `formats/worldfile` | World file raster georef | `WorldFile` |
 | `formats/nitfs` | NITF image | `NITFSImageBand`, `NITFSSegment` |
 
@@ -169,12 +169,12 @@ writer.close();
 Reads GPS Exchange Format files (`.gpx`) for tracks, routes, and waypoints.
 
 ```java title="GPX — loading tracks"
-GPXDoc gpx = new GPXDoc(new URL("file:///tracks/flight.gpx"));
-gpx.parse();
+GpxReader gpx = new GpxReader();
+gpx.readFile("tracks/flight.gpx");
 
-for (GPXTrack track : gpx.getTracks()) {
-    for (GPXTrackSegment seg : track.getSegments()) {
-        for (GPXTrackPoint pt : seg.getPoints()) {
+for (Track track : gpx.getTracks()) {
+    for (TrackSegment seg : track.getSegments()) {
+        for (TrackPoint pt : seg.getPoints()) {
             double lat  = pt.getLatitude();
             double lon  = pt.getLongitude();
             double ele  = pt.getElevation(); // metres
@@ -189,16 +189,14 @@ for (GPXTrack track : gpx.getTracks()) {
 
 Parses NMEA-0183 GPS sentences (e.g., from a serial GPS receiver or log file).
 
-```java title="NMEA — reading sentences from a stream"
-NMEAReader nmeaReader = new NMEAReader(new FileInputStream("gps.log"));
-NMEASentence sentence;
-while ((sentence = nmeaReader.readSentence()) != null) {
-    if (sentence instanceof GGASentence) {
-        GGASentence gga = (GGASentence) sentence;
-        double lat = gga.getLatitude();
-        double lon = gga.getLongitude();
-        double alt = gga.getAltitude();
-    }
+```java title="NMEA — reading track points from a file"
+NmeaReader nmeaReader = new NmeaReader();
+nmeaReader.readFile("gps.log");
+
+for (TrackPoint pt : nmeaReader.getPoints()) {
+    double lat = pt.getLatitude();
+    double lon = pt.getLongitude();
+    double ele = pt.getElevation();
 }
 ```
 
@@ -232,10 +230,10 @@ Key classes:
 
 DirectDraw Surface (`.dds`) is the preferred texture format for WorldWind's tile cache because GPU-decompression (DXT1/DXT3/DXT5) reduces VRAM bandwidth.
 
-```java title="DDSCompressor — compressing a BufferedImage"
-DDSCompressor compressor = new DDSCompressor();
-ByteBuffer ddsData = compressor.compressImage(
-    bufferedImage,
+```java title="DDSCompressor — compressing an image file"
+// Compress an image file directly to a DDS ByteBuffer
+ByteBuffer ddsData = DDSCompressor.compressImageFile(
+    new File("tile.png"),
     new DXTCompressionAttributes());
 
 // Write to file

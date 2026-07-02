@@ -1,7 +1,7 @@
 ---
 title: "Configuring NASA WorldWind Java with the Configuration API"
 sidebarTitle: "Configuration API"
-description: "Use the WorldWind Configuration class to customize SDK behavior: file store paths, model class names, retrieval services, network settings, and OpenGL capabilities."
+description: "Use the WorldWind Configuration class to set file store paths, model class names, retrieval services, and OpenGL capabilities before the SDK initializes."
 ---
 
 The `Configuration` class is WorldWind Java's central registry for all start-up settings. It reads `config/worldwind.xml` on first use, populates an internal `Properties` map with class names, cache sizes, retrieval timeouts, and view parameters, and exposes those values through a set of typed static accessor methods. Every internal WorldWind object — the globe, layers, retrieval service, scene controller — queries `Configuration` to decide which implementation class to instantiate. By writing values into `Configuration` before creating any WorldWind object you can substitute your own implementations, change file-store paths, tune network timeouts, and adjust OpenGL capabilities without editing XML files or subclassing anything.

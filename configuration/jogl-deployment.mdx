@@ -1,7 +1,7 @@
 ---
-title: "Deploying WorldWind Java: JOGL Native Binaries and Distribution"
+title: "WorldWind Java JOGL Native Binary Deployment Guide"
 sidebarTitle: "JOGL Deployment"
-description: "Configure JOGL native library loading for production deployment of NASA WorldWind Java. Avoid temp-directory extraction using library path loading or bundled natives."
+description: "Configure JOGL v2.4 native library loading for WorldWind Java. Avoid temp-directory extraction by placing extracted natives on the Java or OS library path."
 ---
 
 WorldWind Java uses JOGL (the Java Binding for the OpenGL API) to create and manage OpenGL rendering contexts that integrate with Java's AWT and Swing windowing toolkits. JOGL ships as a combination of portable Java JARs and platform-native shared libraries (`.dll`, `.so`, `.dylib`). By default, JOGL automatically extracts these native binaries from their containing JARs into the user's temp directory at runtime. While convenient for development, this automatic extraction is blocked in certain managed or sandboxed environments, adds startup latency, and can collide with security policies that prohibit executing files from temp directories. This page explains the JOGL library structure, the default extraction mechanism, and the recommended approach for production deployments.
@@ -41,7 +41,7 @@ The following native binary JARs are included in WorldWind Java and cover all su
 | `jogl-all-natives-windows-i586.jar` | Windows | 32-bit x86 |
 
 <Note>
-For a typical production deployment you only need the four JARs that match your target platform (two `gluegen-rt-natives-*` and two `jogl-all-natives-*`). The i586 variants can be omitted if you only support 64-bit JVMs.
+For a typical production deployment targeting a single architecture you only need two JARs: one `gluegen-rt-natives-PLATFORM.jar` and one `jogl-all-natives-PLATFORM.jar`. The i586 variants can be omitted if you only support 64-bit JVMs.
 </Note>
 
 ## Default Runtime Extraction

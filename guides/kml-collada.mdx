@@ -63,7 +63,7 @@ The KML object model mirrors the KML 2.2 specification. The key container and fe
 | `KMLScreenOverlay` | A 2D image overlay in screen space (logo, legend, compass rose) |
 | `KMLNetworkLink` | A link to another KML/KMZ document loaded dynamically |
 
-Every feature extends `KMLAbstractFeature` and exposes `getName()`, `getDescription()`, `getVisibility()`, and `getAbstractView()` for camera positioning.
+Every feature extends `KMLAbstractFeature` and exposes `getName()`, `getDescription()`, `getVisibility()`, and `getView()` for camera positioning.
 
 WorldWind maps each feature to one or more `Renderable` objects:
 
@@ -172,8 +172,8 @@ import gov.nasa.worldwind.ogc.kml.KMLAbstractView;
 // Factory method — selects Fly or Orbit controller based on the view type
 KMLViewController viewController = KMLViewController.create(wwd);
 
-// Animate to a KML feature's AbstractView
-KMLAbstractView view = placemark.getAbstractView();
+// Animate to a KML feature's view
+KMLAbstractView view = placemark.getView();
 if (view != null)
 {
     viewController.goTo(view);

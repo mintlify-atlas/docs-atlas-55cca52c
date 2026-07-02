@@ -1,7 +1,7 @@
 ---
 title: "NASA WorldWind Java: 3D Geospatial SDK for Desktop Apps"
 sidebarTitle: "Introduction"
-description: "NASA WorldWind Java is an open-source Java SDK for building cross-platform 3D geospatial desktop applications with an interactive virtual globe powered by OpenGL."
+description: "NASA WorldWind Java: open-source SDK for building 3D geospatial desktop apps with an interactive virtual globe rendered via OpenGL and JOGL on Java 11+."
 ---
 
 NASA WorldWind Java (WWJ) is an open-source 3D virtual globe API for desktop Java, developed by NASA. It provides a geographic context with high-resolution terrain for visualizing geographic or geo-located information in both 3D and 2D. Built on OpenGL via the JOGL library, WorldWind Java enables developers to build rich, interactive geospatial desktop applications that run on Windows, macOS, and Linux — all from a single cross-platform Java codebase. The current stable release is **v2.2.1**, licensed under the [Apache License 2.0](http://www.apache.org/licenses/LICENSE-2.0).
@@ -52,7 +52,7 @@ WorldWind Java is structured around a small set of core interfaces and classes. 
 
 The typical object graph for a WorldWind application looks like this:
 
-```
+```text title="WorldWind Object Graph"
 WorldWindowGLCanvas (WorldWindow)
   └── BasicModel (Model)
         ├── Earth (Globe)

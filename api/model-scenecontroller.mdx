@@ -1,7 +1,7 @@
 ---
 title: "Model and SceneController: Globe, Layers, and Render Loop"
 sidebarTitle: "Model & SceneController"
-description: "The WorldWind Model interface combines a Globe and LayerList. SceneController drives the render and pick loops. BasicModel and BasicSceneController are the default implementations."
+description: "WorldWind Model holds a Globe and LayerList. SceneController drives render and pick passes per frame. BasicModel and BasicSceneController are the defaults."
 ---
 
 In the WorldWind architecture, the `Model` and `SceneController` form the backbone of every rendered frame. A `Model` is a pure data container: it holds the `Globe` (geometry, elevation, and projection of the planet) and the `LayerList` (the ordered stack of imagery, annotations, shapes, and any other visual content). The `SceneController` is the engine that consumes the model each frame: it sets up the `DrawContext`, runs the render pass, runs the pick pass, accumulates performance statistics, and fires rendering events. A `WorldWindow` delegates all frame-generation work to its `SceneController`, which in turn queries the `Model` for what to draw.
@@ -250,7 +250,7 @@ When deep pick is **disabled** (default), the scene controller stops picking as 
 
 ---
 
-### getLastPickedObjects
+### getPickedObjectList
 
 ```java title="Picked object list"
 PickedObjectList getPickedObjectList()

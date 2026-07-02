@@ -231,7 +231,7 @@ WCS100Capabilities wcsCaps = WCS100Capabilities.retrieve(
 wcsCaps.parse();
 
 AVListImpl wcsParams = new AVListImpl();
-wcsParams.setValue(AVKey.IDENTIFIER, "SRTM30");
+wcsParams.setValue(AVKey.COVERAGE_IDENTIFIERS, "SRTM30");
 wcsParams.setValue(AVKey.FORMAT_SUFFIX, ".bil");
 
 WCSElevationModel wcsModel = new WCSElevationModel(wcsCaps, wcsParams);

@@ -1,7 +1,7 @@
 ---
-title: "WorldWindow: The Core Rendering Interface"
+title: "WorldWindow: Core Rendering Interface in WorldWind Java"
 sidebarTitle: "WorldWindow"
-description: "WorldWindow is the central interface in WorldWind Java, providing the OpenGL rendering surface, model/view access, event dispatching, and GPU resource cache."
+description: "WorldWindow is the central interface in WorldWind Java, providing the OpenGL rendering surface, model/view access, event dispatching, and GPU cache."
 ---
 
 `WorldWindow` is the top-level interface common to all toolkit-specific WorldWind rendering surfaces. Every WorldWind application revolves around a `WorldWindow` instance — it owns the OpenGL context, drives the render loop, connects the `Model` (globe and layers) to the `View` (camera), and acts as the hub for all user interaction events. Applications never instantiate `WorldWindow` directly; instead they use one of the two concrete AWT/Swing implementations provided by the SDK.
@@ -13,7 +13,7 @@ WorldWind ships two ready-to-use `WorldWindow` implementations that differ only 
 | Class | Extends | Best For |
 |---|---|---|
 | `WorldWindowGLCanvas` | `com.jogamp.opengl.awt.GLCanvas` (heavyweight AWT) | Most applications; best performance |
-| `WorldWindowGLJPanel` | `javax.swing.JPanel` (lightweight Swing) | Layouts that require a Swing component hierarchy |
+| `WorldWindowGLJPanel` | `com.jogamp.opengl.awt.GLJPanel` (lightweight Swing) | Layouts that require a Swing component hierarchy |
 
 `WorldWindowGLCanvas` is the preferred choice for new applications. It is a heavyweight AWT component backed by a native OpenGL surface. Because it is heavyweight, it follows the rules documented in the [JOGL User's Guide](http://download.java.net/media/jogl/doc/userguide/) when mixed with lightweight Swing components — you may need to call `ToolTipManager.setLightWeightPopupEnabled(false)` and similar helpers.
 
